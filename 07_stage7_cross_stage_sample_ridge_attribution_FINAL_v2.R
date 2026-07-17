@@ -5,59 +5,82 @@
 ##   Raw public data are not bundled with this repository.
 ##
 ## HFpEF Reanalysis Project
-## Stage 5B OFFLINE FIXED v1
-## DoRothEA regulon bootstrap and unbiased matched-TF null
+## Stage 7 FINAL v2
+## Cross-stage constrained sample-level ridge classification
+## and exact additive linear-predictor attribution
 ##
 ## Project:
 ##   <HFPEF_PROJECT_DIR>
 ##
 ## Required completed inputs:
+##   Stage 3:
+##     03_stage3_GSE236585_scRNA_projection_FIXED_v4_PATCH
 ##   Stage 4:
 ##     04_stage4_GSE236585_macrophage_TF_regulon_FIXED_v1
-##   Stage 5:
-##     05_stage5_multiTF_virtual_perturbation_FIXED_v2
+##   Stage 5B:
+##     05B_stage5B_OFFLINE_bootstrap_null_FIXED_v1
+##   Stage 6:
+##     06_stage6_TF_dependent_macrophage_vascular_communication_FINAL_v3
 ##
-## Prespecified candidate TFs:
-##   Bhlhe40, Runx1, Spi1, Rel, Nfkb1, Rela
+## Critical FINAL v2 correction:
+##   In FINAL v1, ligand_sample was grouped by sample_accession while
+##   sample_accession was also returned explicitly inside .(...).
+##   data.table therefore created duplicate sample_accession columns,
+##   and merge.data.table stopped with check_duplicate_names(y).
+##   FINAL v2 removes that duplicated grouping column, validates unique
+##   column names and one-row-per-sample keys after grouped summaries,
+##   and preserves the locked six-sample order through all merges.
 ##
-## Stage 5B OFFLINE objectives:
-##   1) Recalculate the six full-regulon DoRothEA perturbations and
-##      verify exact consistency with the completed Stage 5 v2 output.
-##   2) Bootstrap 80% of each candidate regulon for 500 replicates to
-##      quantify target-set dependence and rank stability.
-##   3) Construct 1,000-draw matched random-TF null distributions for
-##      each candidate without using Stage 2/3 program overlap to
-##      select null TFs.
-##   4) Produce empirical candidate percentiles and one-sided empirical
-##      P values for prioritization before Stage 6 communication analysis.
+## Scientific purpose:
+##   Evaluate whether a prespecified compact feature panel spanning
+##   macrophage TF activity, drug-opposed transcriptional programs,
+##   and TF-linked macrophage-to-vascular/stromal communication carries
+##   HFpEF-versus-Control information at the biological-sample level.
 ##
-## This version is deliberately offline:
-##   - no CollecTRI;
-##   - no decoupleR;
-##   - no OmnipathR;
-##   - no run-time internet access;
-##   - no reprocessing of Stage 1-5.
+## Primary validation:
+##   - Biological sample is the only modeling unit.
+##   - 3 Control and 3 HFpEF samples.
+##   - Exhaustive leave-one-Control-plus-one-HFpEF-pair-out validation:
+##     3 x 3 = 9 held-out pairs.
+##   - Fixed ridge penalty; no outcome-driven feature selection and no
+##     hyperparameter optimization on the six samples.
+##   - Exact enumeration of all 20 balanced 3-versus-3 label assignments
+##     for an empirical sample-label permutation null.
+##
+## Primary feature panel:
+##   1) Stage 4 Bhlhe40 activity
+##   2) Stage 4 Nfkb1 activity
+##   3) Stage 4 Rela activity
+##   4) Stage 2 Top150 drug-opposed macrophage program score
+##   5) Stage 6 Nfkb1/Rela communication-burden score
+##
+## Extended sensitivity panel:
+##   - Primary panel
+##   - Stage 3-supported Top150 drug-opposed program score
+##   - Bhlhe40 communication-burden score
 ##
 ## Interpretation boundary:
-##   - This is a computational robustness analysis.
-##   - It is not experimental knockdown, knockout, or inhibition.
-##   - Bootstrap intervals quantify dependence on regulon targets, not
-##     population-level biological confidence intervals.
-##   - Empirical null P values are prioritization statistics, not causal
-##     significance tests.
-##   - Biological samples, not cells, are the inferential units.
+##   - This is an exploratory internal separability analysis.
+##   - Six samples cannot establish a clinical classifier.
+##   - Stage 4-6 features were derived from the same biological samples;
+##     this is cross-stage internal evidence, not external validation.
+##   - Feature attribution equals beta_j * standardized_feature_j on the
+##     logistic linear predictor. It is exact additive logit attribution
+##     for the fitted ridge model, not a causal effect and not a general
+##     nonlinear SHAP analysis.
+##   - Cell-level observations are never used as independent model rows.
 ##
 ## Output:
 ##   <HFPEF_PROJECT_DIR>/
-##   05B_stage5B_OFFLINE_bootstrap_null_FIXED_v1
+##   07_stage7_cross_stage_sample_ridge_attribution_FINAL_v2
 ##
 ## CHECK:
 ##   <HFPEF_PROJECT_DIR>/
-##   05B_stage5B_OFFLINE_bootstrap_null_FIXED_v1_CHECK.zip
+##   07_stage7_cross_stage_sample_ridge_attribution_FINAL_v2_CHECK.zip
 ##
-## Recommended run:
+## Run:
 ##   source(
-##     "<HFPEF_PROJECT_DIR>/HFpEF_Stage5B_OFFLINE_Bootstrap_Null_FIXED_v1.R",
+##     "<HFPEF_PROJECT_DIR>/HFpEF_Stage7_CrossStage_Sample_Ridge_Attribution_FINAL_v2.R",
 ##     encoding = "UTF-8"
 ##   )
 ############################################################
@@ -68,12 +91,12 @@ gc()
 options(stringsAsFactors = FALSE)
 options(warn = 1)
 options(encoding = "UTF-8")
-options(future.globals.maxSize = 12 * 1024^3)
+options(timeout = 7200)
 
 set.seed(20260714)
 
 ############################################################
-## 0. Locked paths and analysis settings
+## 0. Locked paths and prespecified settings
 ############################################################
 
 PROJECT_DIR <- Sys.getenv("HFPEF_PROJECT_DIR", unset = "")
@@ -99,9 +122,26 @@ STAGE4_DIR <- file.path(
   "04_stage4_GSE236585_macrophage_TF_regulon_FIXED_v1"
 )
 
-STAGE5_DIR <- file.path(
+STAGE5B_DIR <- file.path(
   PROJECT_DIR,
-  "05_stage5_multiTF_virtual_perturbation_FIXED_v2"
+  "05B_stage5B_OFFLINE_bootstrap_null_FIXED_v1"
+)
+
+STAGE6_DIR <- file.path(
+  PROJECT_DIR,
+  "06_stage6_TF_dependent_macrophage_vascular_communication_FINAL_v3"
+)
+
+STAGE3_STATUS_FILE <- file.path(
+  STAGE3_DIR,
+  "01_tables",
+  "39_stage3_run_status.csv"
+)
+
+STAGE3_CHECKS_FILE <- file.path(
+  STAGE3_DIR,
+  "01_tables",
+  "38_scientific_completion_checks.csv"
 )
 
 STAGE3_SAMPLE_META_FILE <- file.path(
@@ -122,18 +162,6 @@ STAGE4_CHECKS_FILE <- file.path(
   "20_stage4_scientific_completion_checks.csv"
 )
 
-STAGE4_NETWORK_FILE <- file.path(
-  STAGE4_DIR,
-  "01_tables",
-  "05_stage4_full_TF_target_links.csv"
-)
-
-STAGE4_REGULON_SIZE_FILE <- file.path(
-  STAGE4_DIR,
-  "01_tables",
-  "07_stage4_regulon_size_summary.csv"
-)
-
 STAGE4_PROGRAM_FILE <- file.path(
   STAGE4_DIR,
   "01_tables",
@@ -152,26 +180,56 @@ STAGE4_ACTIVITY_RDS <- file.path(
   "stage4_weighted_regulon_activity_sample_matrix.rds"
 )
 
-STAGE5_STATUS_FILE <- file.path(
-  STAGE5_DIR,
+STAGE5B_STATUS_FILE <- file.path(
+  STAGE5B_DIR,
   "01_tables",
-  "21_stage5_run_status.csv"
+  "17_stage5B_run_status.csv"
 )
 
-STAGE5_CHECKS_FILE <- file.path(
-  STAGE5_DIR,
+STAGE5B_CHECKS_FILE <- file.path(
+  STAGE5B_DIR,
   "01_tables",
-  "20_stage5_scientific_completion_checks.csv"
+  "16_stage5B_scientific_completion_checks.csv"
 )
 
-STAGE5_CANDIDATE_FILE <- file.path(
-  STAGE5_DIR,
+STAGE5B_RANK_FILE <- file.path(
+  STAGE5B_DIR,
   "01_tables",
-  "13_stage5_candidate_TF_rank_aggregation.csv"
+  "13_stage5B_final_candidate_robustness_rank.csv"
+)
+
+STAGE6_STATUS_FILE <- file.path(
+  STAGE6_DIR,
+  "01_tables",
+  "23_stage6_run_status.csv"
+)
+
+STAGE6_CHECKS_FILE <- file.path(
+  STAGE6_DIR,
+  "01_tables",
+  "22_stage6_scientific_completion_checks.csv"
+)
+
+STAGE6_AXES_FILE <- file.path(
+  STAGE6_DIR,
+  "01_tables",
+  "15_stage6_candidate_TF_ligand_receptor_axes.csv"
+)
+
+STAGE6_EXPRESSION_FILE <- file.path(
+  STAGE6_DIR,
+  "01_tables",
+  "05_stage6_selected_ligand_receptor_expression_by_sample.csv"
+)
+
+STAGE6_CANDIDATE_SUMMARY_FILE <- file.path(
+  STAGE6_DIR,
+  "01_tables",
+  "19_stage6_candidate_TF_communication_summary.csv"
 )
 
 STAGE_NAME <-
-  "05B_stage5B_OFFLINE_bootstrap_null_FIXED_v1"
+  "07_stage7_cross_stage_sample_ridge_attribution_FINAL_v2"
 
 OUT_DIR <- file.path(
   PROJECT_DIR,
@@ -186,81 +244,92 @@ CHECK_ZIP <- file.path(
   )
 )
 
-EXPECTED_SCRIPT_FILE <- file.path(
-  PROJECT_DIR,
-  "R",
-  "05b_stage5B_offline_bootstrap_null_FIXED_v1.R"
-)
+EXPECTED_SCRIPT_FILE <- file.path(PROJECT_DIR, "07_stage7_cross_stage_sample_ridge_attribution_FINAL_v2.R")
 
-REPLACE_EXISTING_STAGE5B <- TRUE
+REPLACE_EXISTING_STAGE7 <- TRUE
 
-CANDIDATE_TFS_REQUESTED <- c(
+CANDIDATE_TFS <- c(
   "Bhlhe40",
-  "Runx1",
-  "Spi1",
-  "Rel",
   "Nfkb1",
   "Rela"
 )
 
 PRIMARY_SIGNATURE_SIZE <- 150L
-MIN_ABS_OBSERVED_PROGRAM_GAP <- 0.10
-MIN_TARGETS_PER_REGULON <- 10L
-MAX_ABS_GENE_SHIFT_SD <- 2.50
 
-BOOTSTRAP_REPLICATES <- 500L
-BOOTSTRAP_TARGET_FRACTION <- 0.80
+PRIMARY_PANEL <- c(
+  "TF_Bhlhe40_activity",
+  "TF_Nfkb1_activity",
+  "TF_Rela_activity",
+  "PROGRAM_DrugOpposed_Top150",
+  "COMM_NFkB_axis_burden"
+)
 
-NULL_DRAWS_PER_CANDIDATE <- 1000L
-NULL_NEAREST_POOL_SIZE <- 60L
-NULL_MIN_POOL_SIZE <- 20L
+EXTENDED_PANEL <- c(
+  PRIMARY_PANEL,
+  "PROGRAM_DrugOpposed_Top150_Stage3Supported",
+  "COMM_Bhlhe40_axis_burden"
+)
 
-STAGE5_AUDIT_TOLERANCE <- 1e-6
+PRIMARY_RIDGE_LAMBDA <- 1.0
+
+RIDGE_LAMBDA_SENSITIVITY <- c(
+  0.25,
+  1.0,
+  4.0
+)
+
+MAX_NFKB_AXES <- 30L
+MAX_BHLHE40_AXES <- 20L
+STRICT_SUPPORT_WEIGHT <- 1.25
+RIDGE_MAX_ITERATIONS <- 5000L
+RIDGE_CONVERGENCE_TOLERANCE <- 1e-8
+
+MAX_FIGURE_WIDTH_IN <- 12
+MAX_FIGURE_HEIGHT_IN <- 9
 
 ############################################################
-## 1. Preflight and output setup
+## 1. Preflight, packages, output, and logging
 ############################################################
 
 detect_script_file <- function() {
   candidates <- character()
-
   frames <- sys.frames()
 
-  for (i in rev(seq_along(frames))) {
-    ofile <- tryCatch(
-      frames[[i]]$ofile,
+  for (frame_index in rev(seq_along(frames))) {
+    source_file <- tryCatch(
+      frames[[frame_index]]$ofile,
       error = function(e) NULL
     )
 
     if (
-      !is.null(ofile) &&
-      length(ofile) == 1L &&
-      nzchar(ofile)
+      !is.null(source_file) &&
+      length(source_file) == 1L &&
+      nzchar(source_file)
     ) {
       candidates <- c(
         candidates,
-        ofile
+        source_file
       )
     }
   }
 
-  args <- commandArgs(
+  command_arguments <- commandArgs(
     trailingOnly = FALSE
   )
 
-  file_arg <- grep(
+  file_argument <- grep(
     "^--file=",
-    args,
+    command_arguments,
     value = TRUE
   )
 
-  if (length(file_arg) > 0L) {
+  if (length(file_argument) > 0L) {
     candidates <- c(
       candidates,
       sub(
         "^--file=",
         "",
-        file_arg[1L]
+        file_argument[1L]
       )
     )
   }
@@ -300,17 +369,22 @@ if (
 
 required_inputs <- c(
   PROJECT_DIR,
+  STAGE3_STATUS_FILE,
+  STAGE3_CHECKS_FILE,
   STAGE3_SAMPLE_META_FILE,
   STAGE4_STATUS_FILE,
   STAGE4_CHECKS_FILE,
-  STAGE4_NETWORK_FILE,
-  STAGE4_REGULON_SIZE_FILE,
   STAGE4_PROGRAM_FILE,
   STAGE4_PSEUDOBULK_RDS,
   STAGE4_ACTIVITY_RDS,
-  STAGE5_STATUS_FILE,
-  STAGE5_CHECKS_FILE,
-  STAGE5_CANDIDATE_FILE
+  STAGE5B_STATUS_FILE,
+  STAGE5B_CHECKS_FILE,
+  STAGE5B_RANK_FILE,
+  STAGE6_STATUS_FILE,
+  STAGE6_CHECKS_FILE,
+  STAGE6_AXES_FILE,
+  STAGE6_EXPRESSION_FILE,
+  STAGE6_CANDIDATE_SUMMARY_FILE
 )
 
 missing_inputs <- required_inputs[
@@ -319,7 +393,7 @@ missing_inputs <- required_inputs[
 
 if (length(missing_inputs) > 0L) {
   stop(
-    "Required Stage 3/4/5 input path(s) are missing:\n",
+    "Required Stage 3/4/5B/6 input path(s) are missing:\n",
     paste(
       missing_inputs,
       collapse = "\n"
@@ -327,142 +401,75 @@ if (length(missing_inputs) > 0L) {
   )
 }
 
-stage4_status <- data.table::fread(
-  STAGE4_STATUS_FILE,
-  encoding = "UTF-8"
-)
-
-stage5_status <- data.table::fread(
-  STAGE5_STATUS_FILE,
-  encoding = "UTF-8"
-)
-
-stage4_checks <- data.table::fread(
-  STAGE4_CHECKS_FILE,
-  encoding = "UTF-8"
-)
-
-stage5_checks <- data.table::fread(
-  STAGE5_CHECKS_FILE,
-  encoding = "UTF-8"
-)
-
-allowed_stage4_status <- c(
-  "COMPLETED_STAGE4_READY_FOR_REVIEW",
-  "COMPLETED_STAGE4_READY_WITH_METHOD_CAUTION"
-)
-
-if (
-  !"overall_status" %in% names(stage4_status) ||
-  !stage4_status$overall_status[1L] %in%
-    allowed_stage4_status
-) {
-  stop(
-    "Stage 4 is not in an allowed completed state."
-  )
-}
-
-if (
-  !"overall_status" %in% names(stage5_status) ||
-  stage5_status$overall_status[1L] !=
-    "COMPLETED_STAGE5_READY_FOR_REVIEW"
-) {
-  stop(
-    "Stage 5 v2 is not locked as ",
-    "COMPLETED_STAGE5_READY_FOR_REVIEW."
-  )
-}
-
-if (
-  !all(
-    c(
-      "check",
-      "status"
-    ) %in% names(stage4_checks)
-  ) ||
-  any(stage4_checks$status != "PASS")
-) {
-  stop(
-    "At least one Stage 4 completion check is not PASS."
-  )
-}
-
-if (
-  !all(
-    c(
-      "check",
-      "status"
-    ) %in% names(stage5_checks)
-  ) ||
-  any(stage5_checks$status != "PASS")
-) {
-  stop(
-    "At least one Stage 5 completion check is not PASS."
-  )
-}
-
-replacement_audit <- data.table::data.table(
-  path = c(
-    OUT_DIR,
-    CHECK_ZIP
-  ),
-  path_type = c(
-    "stage5B_output_directory",
-    "stage5B_check_zip"
-  ),
-  existed_before = FALSE,
-  deletion_attempted = FALSE,
-  deletion_succeeded = FALSE
-)
-
-if (REPLACE_EXISTING_STAGE5B) {
-  for (
-    i in seq_len(
-      nrow(replacement_audit)
+ensure_cran <- function(packages) {
+  missing <- packages[
+    !vapply(
+      packages,
+      requireNamespace,
+      logical(1),
+      quietly = TRUE
     )
-  ) {
-    target_path <- replacement_audit$path[i]
+  ]
 
-    existed <- (
-      dir.exists(target_path) ||
-        file.exists(target_path)
+  if (length(missing) > 0L) {
+    install.packages(
+      missing,
+      repos = "https://cloud.r-project.org",
+      dependencies = TRUE
     )
+  }
 
-    replacement_audit$existed_before[i] <- existed
+  still_missing <- packages[
+    !vapply(
+      packages,
+      requireNamespace,
+      logical(1),
+      quietly = TRUE
+    )
+  ]
 
-    if (existed) {
-      replacement_audit$deletion_attempted[i] <- TRUE
-
-      unlink(
-        target_path,
-        recursive = dir.exists(target_path),
-        force = TRUE
+  if (length(still_missing) > 0L) {
+    stop(
+      "Required CRAN package(s) unavailable: ",
+      paste(
+        still_missing,
+        collapse = ", "
       )
+    )
+  }
+}
 
-      replacement_audit$deletion_succeeded[i] <- !(
-        dir.exists(target_path) ||
-          file.exists(target_path)
-      )
+ensure_cran(
+  c(
+    "data.table",
+    "ggplot2",
+    "writexl",
+    "zip",
+    "digest"
+  )
+)
 
-      if (
-        !replacement_audit$
-          deletion_succeeded[i]
-      ) {
-        stop(
-          "Failed to remove previous Stage 5B path: ",
-          target_path
-        )
-      }
-    } else {
-      replacement_audit$deletion_succeeded[i] <- TRUE
-    }
+if (REPLACE_EXISTING_STAGE7) {
+  if (dir.exists(OUT_DIR)) {
+    unlink(
+      OUT_DIR,
+      recursive = TRUE,
+      force = TRUE
+    )
+  }
+
+  if (file.exists(CHECK_ZIP)) {
+    unlink(
+      CHECK_ZIP,
+      force = TRUE
+    )
   }
 } else if (
   dir.exists(OUT_DIR) ||
   file.exists(CHECK_ZIP)
 ) {
   stop(
-    "Existing Stage 5B output detected while replacement is disabled."
+    "Existing Stage 7 output detected while replacement is disabled."
   )
 }
 
@@ -497,15 +504,13 @@ DIRS <- list(
   )
 )
 
-for (
-  directory_i in c(
-    OUT_DIR,
-    unlist(
-      DIRS,
-      use.names = FALSE
-    )
+for (directory_i in c(
+  OUT_DIR,
+  unlist(
+    DIRS,
+    use.names = FALSE
   )
-) {
+)) {
   dir.create(
     directory_i,
     recursive = TRUE,
@@ -517,31 +522,18 @@ START_TIME <- Sys.time()
 
 LOG_FILE <- file.path(
   DIRS$logs,
-  "stage5B_OFFLINE_bootstrap_null.log"
+  "stage7_cross_stage_sample_ridge.log"
 )
 
 WARN_FILE <- file.path(
   DIRS$logs,
-  "stage5B_OFFLINE_warnings.log"
-)
-
-data.table::fwrite(
-  replacement_audit,
-  file.path(
-    DIRS$logs,
-    "stage5B_replacement_audit.csv"
-  )
+  "stage7_warnings.log"
 )
 
 log_msg <- function(
   ...,
   level = "INFO"
 ) {
-  message_text <- paste0(
-    ...,
-    collapse = ""
-  )
-
   line <- sprintf(
     "[%s] [%s] %s",
     format(
@@ -549,7 +541,10 @@ log_msg <- function(
       "%Y-%m-%d %H:%M:%S"
     ),
     level,
-    message_text
+    paste0(
+      ...,
+      collapse = ""
+    )
   )
 
   cat(
@@ -611,123 +606,11 @@ add_warning <- function(
 }
 
 log_msg(
-  "Stage 5B OFFLINE robustness analysis started."
-)
-
-log_msg(
-  "Stage 4 status: ",
-  stage4_status$overall_status[1L]
-)
-
-log_msg(
-  "Stage 5 status: ",
-  stage5_status$overall_status[1L]
-)
-
-log_msg(
-  "Output: ",
-  OUT_DIR
+  "Stage 7 analysis started."
 )
 
 ############################################################
-## 2. Packages
-############################################################
-
-ensure_cran <- function(
-  packages,
-  required = TRUE
-) {
-  missing <- packages[
-    !vapply(
-      packages,
-      requireNamespace,
-      logical(1),
-      quietly = TRUE
-    )
-  ]
-
-  if (length(missing) > 0L) {
-    log_msg(
-      "Installing missing CRAN package(s): ",
-      paste(
-        missing,
-        collapse = ", "
-      )
-    )
-
-    try(
-      install.packages(
-        missing,
-        repos =
-          "https://cloud.r-project.org",
-        dependencies = TRUE
-      ),
-      silent = TRUE
-    )
-  }
-
-  still_missing <- packages[
-    !vapply(
-      packages,
-      requireNamespace,
-      logical(1),
-      quietly = TRUE
-    )
-  ]
-
-  if (length(still_missing) > 0L) {
-    package_message <- paste(
-      "Required CRAN package(s) unavailable:",
-      paste(
-        still_missing,
-        collapse = ", "
-      )
-    )
-
-    if (required) {
-      stop(package_message)
-    } else {
-      add_warning(
-        "PACKAGE",
-        paste(
-          still_missing,
-          collapse = ";"
-        ),
-        package_message
-      )
-    }
-  }
-
-  invisible(
-    setdiff(
-      packages,
-      still_missing
-    )
-  )
-}
-
-ensure_cran(
-  c(
-    "data.table",
-    "Matrix",
-    "ggplot2",
-    "pheatmap",
-    "writexl",
-    "zip",
-    "digest"
-  ),
-  required = TRUE
-)
-
-suppressPackageStartupMessages({
-  library(data.table)
-  library(Matrix)
-  library(ggplot2)
-  library(pheatmap)
-})
-
-############################################################
-## 3. General utilities
+## 2. General utilities
 ############################################################
 
 normalize_text <- function(x) {
@@ -806,6 +689,7 @@ read_table_auto <- function(path) {
     )
 
     close(gzip_connection)
+
     on.exit(
       NULL,
       add = FALSE
@@ -818,6 +702,184 @@ read_table_auto <- function(path) {
       encoding = "UTF-8"
     )
   }
+}
+
+assert_unique_column_names <- function(
+  table_object,
+  object_name
+) {
+  column_names <- names(
+    table_object
+  )
+
+  duplicated_names <- unique(
+    column_names[
+      duplicated(
+        column_names
+      )
+    ]
+  )
+
+  if (length(duplicated_names) > 0L) {
+    stop(
+      object_name,
+      " contains duplicated column name(s): ",
+      paste(
+        duplicated_names,
+        collapse = ", "
+      )
+    )
+  }
+
+  invisible(TRUE)
+}
+
+assert_required_columns <- function(
+  table_object,
+  required_columns,
+  object_name
+) {
+  missing_columns <- setdiff(
+    required_columns,
+    names(
+      table_object
+    )
+  )
+
+  if (length(missing_columns) > 0L) {
+    stop(
+      object_name,
+      " is missing required column(s): ",
+      paste(
+        missing_columns,
+        collapse = ", "
+      )
+    )
+  }
+
+  invisible(TRUE)
+}
+
+assert_unique_rows_by <- function(
+  table_object,
+  key_columns,
+  object_name
+) {
+  assert_required_columns(
+    table_object,
+    key_columns,
+    object_name
+  )
+
+  key_frame <- as.data.frame(
+    table_object[
+      ,
+      key_columns,
+      with = FALSE
+    ],
+    stringsAsFactors = FALSE
+  )
+
+  duplicated_key <- duplicated(
+    key_frame
+  )
+
+  if (any(duplicated_key)) {
+    duplicate_preview <- unique(
+      key_frame[
+        duplicated_key,
+        ,
+        drop = FALSE
+      ]
+    )
+
+    preview_text <- paste(
+      utils::capture.output(
+        print(
+          utils::head(
+            duplicate_preview,
+            5L
+          ),
+          row.names = FALSE
+        )
+      ),
+      collapse = " | "
+    )
+
+    stop(
+      object_name,
+      " contains duplicated row key(s) for ",
+      paste(
+        key_columns,
+        collapse = "+"
+      ),
+      ". Preview: ",
+      preview_text
+    )
+  }
+
+  invisible(TRUE)
+}
+
+grouped_summary_self_test <- data.table::data.table(
+  sample_accession = c(
+    "S1",
+    "S1",
+    "S2"
+  ),
+  value = c(
+    1,
+    3,
+    2
+  )
+)[
+  ,
+  .(
+    mean_value =
+      mean(value)
+  ),
+  by = .(
+    sample_accession
+  )
+]
+
+assert_unique_column_names(
+  grouped_summary_self_test,
+  "grouped_summary_self_test"
+)
+
+assert_unique_rows_by(
+  grouped_summary_self_test,
+  "sample_accession",
+  "grouped_summary_self_test"
+)
+
+rm(grouped_summary_self_test)
+
+write_csv_safe <- function(
+  table_object,
+  path,
+  compress = FALSE
+) {
+  table_object <- data.table::as.data.table(
+    table_object
+  )
+
+  if (ncol(table_object) == 0L) {
+    table_object <- data.table::data.table(
+      note = "No records generated."
+    )
+  }
+
+  data.table::fwrite(
+    table_object,
+    path,
+    compress = if (compress) {
+      "gzip"
+    } else {
+      "none"
+    }
+  )
 }
 
 safe_mean <- function(
@@ -848,245 +910,137 @@ safe_median <- function(
   stats::median(x)
 }
 
-safe_quantile <- function(
-  x,
-  probability,
-  default = NA_real_
+safe_auc <- function(
+  labels,
+  scores
 ) {
-  x <- as.numeric(x)
-  x <- x[is.finite(x)]
+  labels <- as.integer(labels)
+  scores <- as.numeric(scores)
 
-  if (length(x) == 0L) {
-    return(default)
-  }
-
-  as.numeric(
-    stats::quantile(
-      x,
-      probs = probability,
-      names = FALSE,
-      na.rm = TRUE,
-      type = 7
-    )
+  keep <- (
+    !is.na(labels) &
+      is.finite(scores)
   )
-}
 
-write_csv_safe <- function(
-  x,
-  path,
-  compress = FALSE
-) {
+  labels <- labels[keep]
+  scores <- scores[keep]
+
+  positive_n <- sum(
+    labels == 1L
+  )
+
+  negative_n <- sum(
+    labels == 0L
+  )
+
   if (
-    is.null(x) ||
-    ncol(x) == 0L
+    positive_n == 0L ||
+    negative_n == 0L
   ) {
-    data.table::fwrite(
-      data.table::data.table(
-        note =
-          "No records generated."
-      ),
-      path
+    return(NA_real_)
+  }
+
+  score_ranks <- rank(
+    scores,
+    ties.method = "average"
+  )
+
+  (
+    sum(
+      score_ranks[
+        labels == 1L
+      ]
+    ) -
+      positive_n *
+        (
+          positive_n + 1
+        ) /
+        2
+  ) /
+    (
+      positive_n *
+        negative_n
     )
-  } else {
-    data.table::fwrite(
-      x,
-      path,
-      compress = if (compress) {
-        "gzip"
-      } else {
-        "none"
-      }
+}
+
+roc_curve_dt <- function(
+  labels,
+  scores
+) {
+  labels <- as.integer(labels)
+  scores <- as.numeric(scores)
+
+  keep <- (
+    !is.na(labels) &
+      is.finite(scores)
+  )
+
+  labels <- labels[keep]
+  scores <- scores[keep]
+
+  if (length(unique(labels)) < 2L) {
+    return(
+      data.table::data.table(
+        false_positive_rate = c(
+          0,
+          1
+        ),
+        true_positive_rate = c(
+          0,
+          1
+        )
+      )
     )
   }
-}
 
-save_plot_bundle <- function(
-  plot_object,
-  stem,
-  width,
-  height
-) {
-  paths <- c(
-    png = file.path(
-      DIRS$figures,
-      paste0(
-        stem,
-        ".png"
-      )
+  order_index <- order(
+    scores,
+    decreasing = TRUE
+  )
+
+  labels <- labels[
+    order_index
+  ]
+
+  scores <- scores[
+    order_index
+  ]
+
+  positive_n <- sum(
+    labels == 1L
+  )
+
+  negative_n <- sum(
+    labels == 0L
+  )
+
+  true_positive <- cumsum(
+    labels == 1L
+  )
+
+  false_positive <- cumsum(
+    labels == 0L
+  )
+
+  data.table::data.table(
+    false_positive_rate = c(
+      0,
+      false_positive /
+        negative_n,
+      1
     ),
-    pdf = file.path(
-      DIRS$figures,
-      paste0(
-        stem,
-        ".pdf"
-      )
+    true_positive_rate = c(
+      0,
+      true_positive /
+        positive_n,
+      1
     ),
-    tiff = file.path(
-      DIRS$figures,
-      paste0(
-        stem,
-        ".tiff"
-      )
+    threshold = c(
+      Inf,
+      scores,
+      -Inf
     )
   )
-
-  ggplot2::ggsave(
-    paths["png"],
-    plot_object,
-    width = width,
-    height = height,
-    dpi = 300,
-    bg = "white"
-  )
-
-  ggplot2::ggsave(
-    paths["pdf"],
-    plot_object,
-    width = width,
-    height = height,
-    bg = "white"
-  )
-
-  ggplot2::ggsave(
-    paths["tiff"],
-    plot_object,
-    width = width,
-    height = height,
-    dpi = 600,
-    compression = "lzw",
-    bg = "white"
-  )
-
-  invisible(paths)
-}
-
-save_heatmap_bundle <- function(
-  matrix_object,
-  stem,
-  width,
-  height,
-  title = NULL
-) {
-  paths <- c(
-    png = file.path(
-      DIRS$figures,
-      paste0(
-        stem,
-        ".png"
-      )
-    ),
-    pdf = file.path(
-      DIRS$figures,
-      paste0(
-        stem,
-        ".pdf"
-      )
-    ),
-    tiff = file.path(
-      DIRS$figures,
-      paste0(
-        stem,
-        ".tiff"
-      )
-    )
-  )
-
-  grDevices::png(
-    paths["png"],
-    width = width * 300,
-    height = height * 300,
-    res = 300
-  )
-
-  pheatmap::pheatmap(
-    matrix_object,
-    cluster_rows = TRUE,
-    cluster_cols = FALSE,
-    border_color = NA,
-    main = title
-  )
-
-  grDevices::dev.off()
-
-  grDevices::pdf(
-    paths["pdf"],
-    width = width,
-    height = height
-  )
-
-  pheatmap::pheatmap(
-    matrix_object,
-    cluster_rows = TRUE,
-    cluster_cols = FALSE,
-    border_color = NA,
-    main = title
-  )
-
-  grDevices::dev.off()
-
-  grDevices::tiff(
-    paths["tiff"],
-    width = width,
-    height = height,
-    units = "in",
-    res = 600,
-    compression = "lzw"
-  )
-
-  pheatmap::pheatmap(
-    matrix_object,
-    cluster_rows = TRUE,
-    cluster_cols = FALSE,
-    border_color = NA,
-    main = title
-  )
-
-  grDevices::dev.off()
-
-  invisible(paths)
-}
-
-scale_rows <- function(matrix_object) {
-  matrix_object <- as.matrix(
-    matrix_object
-  )
-
-  row_means <- rowMeans(
-    matrix_object,
-    na.rm = TRUE
-  )
-
-  row_standard_deviations <- apply(
-    matrix_object,
-    1L,
-    stats::sd,
-    na.rm = TRUE
-  )
-
-  row_standard_deviations[
-    !is.finite(
-      row_standard_deviations
-    ) |
-      row_standard_deviations == 0
-  ] <- 1
-
-  output <- sweep(
-    matrix_object,
-    1L,
-    row_means,
-    "-"
-  )
-
-  output <- sweep(
-    output,
-    1L,
-    row_standard_deviations,
-    "/"
-  )
-
-  output[!is.finite(output)] <- 0
-
-  output
 }
 
 make_feature_map <- function(features) {
@@ -1108,1158 +1062,691 @@ make_feature_map <- function(features) {
   ]
 }
 
-map_symbols_to_features <- function(
-  symbols,
+map_keys_to_features <- function(
+  keys,
   feature_map
 ) {
   query <- data.table::data.table(
-    symbol = as.character(symbols),
-    feature_key =
-      gene_key(symbols)
+    feature_key = gene_key(keys)
   )
 
-  merge(
-    query,
-    feature_map,
-    by = "feature_key",
-    all.x = TRUE,
-    sort = FALSE
+  unique(
+    merge(
+      query,
+      feature_map,
+      by = "feature_key",
+      all.x = TRUE,
+      sort = FALSE
+    )[
+      !is.na(feature),
+      feature
+    ]
   )
 }
 
-rank_metric <- function(
-  x,
-  higher_is_better = TRUE
-) {
-  x <- as.numeric(x)
-  finite <- is.finite(x)
+split_semicolon <- function(x) {
+  x <- normalize_text(x)
 
-  output <- rep(
-    sum(finite) + 1,
-    length(x)
+  parts <- unlist(
+    strsplit(
+      x,
+      ";",
+      fixed = TRUE
+    ),
+    use.names = FALSE
   )
 
-  if (any(finite)) {
-    output[finite] <- rank(
-      if (higher_is_better) {
-        -x[finite]
-      } else {
-        x[finite]
-      },
-      ties.method = "average"
-    )
-  }
+  parts <- trimws(parts)
 
-  output
-}
-
-############################################################
-## 4. Program and perturbation functions
-############################################################
-
-make_program_definitions <- function(
-  stage4_manifest,
-  feature_map
-) {
-  manifest <- data.table::copy(
-    stage4_manifest
-  )
-
-  required_columns <- c(
-    "program_name",
-    "subset_name",
-    "direction",
-    "signature_size",
-    "symbol_key"
-  )
-
-  missing_columns <- setdiff(
-    required_columns,
-    names(manifest)
-  )
-
-  if (length(missing_columns) > 0L) {
-    stop(
-      "Stage 4 program manifest is missing column(s): ",
-      paste(
-        missing_columns,
-        collapse = ", "
-      )
-    )
-  }
-
-  manifest[
-    ,
-    support_class := ifelse(
-      grepl(
-        "Stage3Supported$",
-        program_name
-      ),
-      "Stage3_supported",
-      "Full_Stage2"
-    )
-  ]
-
-  definitions <- list()
-  summary_records <- list()
-
-  grouping <- unique(
-    manifest[
-      ,
-      .(
-        subset_name,
-        signature_size,
-        support_class
-      )
+  unique(
+    parts[
+      nzchar(parts)
     ]
-  )
-
-  for (
-    group_index in seq_len(
-      nrow(grouping)
-    )
-  ) {
-    subset_i <-
-      grouping$subset_name[
-        group_index
-      ]
-
-    signature_size_i <-
-      grouping$signature_size[
-        group_index
-      ]
-
-    support_class_i <-
-      grouping$support_class[
-        group_index
-      ]
-
-    part <- manifest[
-      subset_name == subset_i &
-        signature_size ==
-          signature_size_i &
-        support_class ==
-          support_class_i
-    ]
-
-    up_map <- map_symbols_to_features(
-      part[
-        direction ==
-          "Disease_up_Drug_down",
-        symbol_key
-      ],
-      feature_map
-    )
-
-    down_map <- map_symbols_to_features(
-      part[
-        direction ==
-          "Disease_down_Drug_up",
-        symbol_key
-      ],
-      feature_map
-    )
-
-    up_features <- unique(
-      up_map[
-        !is.na(feature),
-        feature
-      ]
-    )
-
-    down_features <- unique(
-      down_map[
-        !is.na(feature),
-        feature
-      ]
-    )
-
-    if (
-      length(up_features) +
-        length(down_features) <
-        5L
-    ) {
-      next
-    }
-
-    program_id <- paste(
-      "DrugOpposedNet",
-      subset_i,
-      support_class_i,
-      paste0(
-        "Top",
-        signature_size_i
-      ),
-      sep = "__"
-    )
-
-    definitions[[program_id]] <- list(
-      program_id = program_id,
-      program_category =
-        "Stage2_drug_opposed_net",
-      subset_name = subset_i,
-      signature_size =
-        as.integer(
-          signature_size_i
-        ),
-      support_class =
-        support_class_i,
-      up_features = up_features,
-      down_features = down_features,
-      primary_program = (
-        as.integer(
-          signature_size_i
-        ) ==
-          PRIMARY_SIGNATURE_SIZE
-      )
-    )
-
-    summary_records[[length(summary_records) + 1L]] <- data.table::data.table(
-      program_id = program_id,
-      program_category =
-        "Stage2_drug_opposed_net",
-      subset_name = subset_i,
-      signature_size =
-        as.integer(
-          signature_size_i
-        ),
-      support_class =
-        support_class_i,
-      detected_up_genes =
-        length(up_features),
-      detected_down_genes =
-        length(down_features),
-      primary_program = (
-        as.integer(
-          signature_size_i
-        ) ==
-          PRIMARY_SIGNATURE_SIZE
-      )
-    )
-  }
-
-  functional_sets <- list(
-    Inflammatory_Il1b = c(
-      "Il1b",
-      "Tnf",
-      "Nfkbia",
-      "Ccl2",
-      "Ccl3",
-      "Ccl4",
-      "Cxcl2",
-      "S100a8",
-      "S100a9",
-      "Ptgs2"
-    ),
-    NFkB_TNF_response = c(
-      "Tnf",
-      "Nfkbia",
-      "Nfkbiz",
-      "Rel",
-      "Rela",
-      "Nfkb1",
-      "Tnfaip3",
-      "Icam1",
-      "Ccl2",
-      "Ccl3",
-      "Il1b"
-    ),
-    Inflammasome_pyroptosis = c(
-      "Nlrp3",
-      "Pycard",
-      "Casp1",
-      "Gsdmd",
-      "Il1b",
-      "Il18",
-      "Txnip",
-      "P2rx7"
-    ),
-    Interferon_response = c(
-      "Isg15",
-      "Ifit1",
-      "Ifit2",
-      "Ifit3",
-      "Irf7",
-      "Rsad2",
-      "Oas1a",
-      "Stat1",
-      "Cxcl9",
-      "Cxcl10"
-    ),
-    Antigen_presentation = c(
-      "H2-Ab1",
-      "H2-Aa",
-      "Cd74",
-      "Ciita",
-      "H2-Eb1",
-      "Tap1",
-      "B2m"
-    ),
-    Spp1_Trem2_remodeling = c(
-      "Spp1",
-      "Trem2",
-      "Gpnmb",
-      "Fabp5",
-      "Lpl",
-      "Apoe",
-      "Ctsb",
-      "Ctsd",
-      "Lgals3"
-    ),
-    Resident_Timd4_Lyve1 = c(
-      "Timd4",
-      "Lyve1",
-      "Folr2",
-      "Mrc1",
-      "Cd163",
-      "Vsig4",
-      "C1qa",
-      "C1qb",
-      "C1qc"
-    ),
-    Ccr2_monocyte_like = c(
-      "Ccr2",
-      "Ly6c2",
-      "Plac8",
-      "Chil3",
-      "Ctss",
-      "Lgals3"
-    ),
-    Myeloid_identity = c(
-      "Spi1",
-      "Csf1r",
-      "Lyz2",
-      "Aif1",
-      "Tyrobp",
-      "Fcerg",
-      "Ctss",
-      "Laptm5",
-      "C1qa",
-      "C1qb",
-      "C1qc"
-    ),
-    Lipid_cholesterol = c(
-      "Apoe",
-      "Lpl",
-      "Abca1",
-      "Abcg1",
-      "Pparg",
-      "Nr1h3",
-      "Soat1",
-      "Lipa",
-      "Fabp5"
-    ),
-    Oxidative_stress = c(
-      "Nfe2l2",
-      "Hmox1",
-      "Nqo1",
-      "Gclc",
-      "Gclm",
-      "Sod2",
-      "Txnrd1",
-      "Prdx1"
-    ),
-    Cycling = c(
-      "Mki67",
-      "Top2a",
-      "Stmn1",
-      "Tubb5",
-      "Hmgb2"
-    )
-  )
-
-  for (
-    set_name in names(
-      functional_sets
-    )
-  ) {
-    mapped <- map_symbols_to_features(
-      functional_sets[[set_name]],
-      feature_map
-    )
-
-    features <- unique(
-      mapped[
-        !is.na(feature),
-        feature
-      ]
-    )
-
-    if (length(features) < 3L) {
-      next
-    }
-
-    program_id <- paste0(
-      "Functional__",
-      set_name
-    )
-
-    definitions[[program_id]] <- list(
-      program_id = program_id,
-      program_category =
-        "Functional_state",
-      subset_name = set_name,
-      signature_size = NA_integer_,
-      support_class = "Curated",
-      up_features = features,
-      down_features = character(),
-      primary_program = set_name %in%
-        c(
-          "Inflammatory_Il1b",
-          "NFkB_TNF_response",
-          "Inflammasome_pyroptosis",
-          "Interferon_response",
-          "Spp1_Trem2_remodeling",
-          "Myeloid_identity"
-        )
-    )
-
-    summary_records[[length(summary_records) + 1L]] <- data.table::data.table(
-      program_id = program_id,
-      program_category =
-        "Functional_state",
-      subset_name = set_name,
-      signature_size = NA_integer_,
-      support_class = "Curated",
-      detected_up_genes =
-        length(features),
-      detected_down_genes = 0L,
-      primary_program = set_name %in%
-        c(
-          "Inflammatory_Il1b",
-          "NFkB_TNF_response",
-          "Inflammasome_pyroptosis",
-          "Interferon_response",
-          "Spp1_Trem2_remodeling",
-          "Myeloid_identity"
-        )
-    )
-  }
-
-  list(
-    definitions = definitions,
-    summary = data.table::rbindlist(
-      summary_records,
-      use.names = TRUE,
-      fill = TRUE
-    )
   )
 }
 
-score_programs <- function(
-  z_matrix,
-  definitions
+safe_scale_training <- function(
+  train_matrix,
+  test_matrix
 ) {
-  output <- matrix(
-    NA_real_,
-    nrow = length(definitions),
-    ncol = ncol(z_matrix),
-    dimnames = list(
-      names(definitions),
-      colnames(z_matrix)
-    )
+  train_matrix <- as.matrix(
+    train_matrix
   )
 
-  for (
-    program_id in names(
-      definitions
-    )
-  ) {
-    definition <- definitions[[program_id]]
-
-    up_features <- intersect(
-      definition$up_features,
-      rownames(z_matrix)
-    )
-
-    down_features <- intersect(
-      definition$down_features,
-      rownames(z_matrix)
-    )
-
-    up_score <- if (
-      length(up_features) > 0L
-    ) {
-      colMeans(
-        z_matrix[
-          up_features,
-          ,
-          drop = FALSE
-        ],
-        na.rm = TRUE
-      )
-    } else {
-      rep(
-        0,
-        ncol(z_matrix)
-      )
-    }
-
-    down_score <- if (
-      length(down_features) > 0L
-    ) {
-      colMeans(
-        z_matrix[
-          down_features,
-          ,
-          drop = FALSE
-        ],
-        na.rm = TRUE
-      )
-    } else {
-      rep(
-        0,
-        ncol(z_matrix)
-      )
-    }
-
-    output[program_id, ] <-
-      up_score - down_score
-  }
-
-  output
-}
-
-weighted_regulon_activity <- function(
-  expression_matrix,
-  network_subset
-) {
-  target_features <- intersect(
-    unique(
-      network_subset$target_feature
-    ),
-    rownames(expression_matrix)
+  test_matrix <- as.matrix(
+    test_matrix
   )
 
-  if (
-    length(target_features) <
-      MIN_TARGETS_PER_REGULON
-  ) {
-    return(NULL)
-  }
-
-  scaled_expression <- scale_rows(
-    expression_matrix[
-      target_features,
-      ,
-      drop = FALSE
-    ]
-  )
-
-  source_symbols <- sort(
-    unique(
-      network_subset$source_symbol
-    )
-  )
-
-  output <- matrix(
-    NA_real_,
-    nrow = length(source_symbols),
-    ncol = ncol(
-      scaled_expression
-    ),
-    dimnames = list(
-      source_symbols,
-      colnames(
-        scaled_expression
-      )
-    )
-  )
-
-  for (
-    source_i in source_symbols
-  ) {
-    network_i <- data.table::copy(
-      network_subset[
-        source_symbol == source_i &
-          target_feature %in%
-            rownames(
-              scaled_expression
-            )
-      ]
-    )
-
-    data.table::setorder(
-      network_i,
-      target_feature,
-      -weight
-    )
-
-    network_i <- network_i[
-      ,
-      .SD[1L],
-      by = target_feature
-    ]
-
-    if (
-      nrow(network_i) <
-        MIN_TARGETS_PER_REGULON
-    ) {
-      next
-    }
-
-    signed_weights <-
-      as.numeric(
-        network_i$mor
-      ) *
-      as.numeric(
-        network_i$weight
-      )
-
-    signed_weights[
-      !is.finite(signed_weights)
-    ] <- 0
-
-    denominator <- sum(
-      abs(signed_weights)
-    )
-
-    if (
-      !is.finite(denominator) ||
-      denominator <= 0
-    ) {
-      next
-    }
-
-    target_z <- scaled_expression[
-      network_i$target_feature,
-      ,
-      drop = FALSE
-    ]
-
-    output[source_i, ] <- colSums(
-      sweep(
-        target_z,
-        1L,
-        signed_weights,
-        "*"
-      )
-    ) / denominator
-  }
-
-  output[
-    rowSums(
-      is.finite(output)
-    ) > 0L,
-    ,
-    drop = FALSE
-  ]
-}
-
-simulate_normalization <- function(
-  observed_z,
-  activity_matrix,
-  tf_requested,
-  network_table,
-  sample_meta
-) {
-  if (
-    !tf_requested %in%
-      rownames(activity_matrix)
-  ) {
-    stop(
-      "TF activity is unavailable: ",
-      tf_requested
-    )
-  }
-
-  sample_ids <- colnames(
-    observed_z
-  )
-
-  metadata <- data.table::copy(
-    sample_meta
-  )
-
-  metadata <- metadata[
-    match(
-      sample_ids,
-      sample_accession
-    )
-  ]
-
-  if (
-    any(
-      is.na(
-        metadata$sample_accession
-      )
-    ) ||
-    any(
-      metadata$sample_accession !=
-        sample_ids
-    )
-  ) {
-    stop(
-      "Sample metadata could not be aligned."
-    )
-  }
-
-  network_tf <- data.table::copy(
-    network_table[
-      source_symbol ==
-        tf_requested &
-        target_feature %in%
-          rownames(observed_z)
-    ]
-  )
-
-  data.table::setorder(
-    network_tf,
-    target_feature,
-    -weight
-  )
-
-  network_tf <- network_tf[
-    ,
-    .SD[1L],
-    by = target_feature
-  ]
-
-  if (
-    nrow(network_tf) <
-      MIN_TARGETS_PER_REGULON
-  ) {
-    stop(
-      "Too few targets for ",
-      tf_requested,
-      ": ",
-      nrow(network_tf)
-    )
-  }
-
-  observed_activity <- as.numeric(
-    activity_matrix[
-      tf_requested,
-      sample_ids
-    ]
-  )
-
-  names(observed_activity) <-
-    sample_ids
-
-  control_reference <- mean(
-    observed_activity[
-      metadata$condition ==
-        "Control"
-    ],
+  training_mean <- colMeans(
+    train_matrix,
     na.rm = TRUE
   )
 
-  desired_activity <-
-    observed_activity
-
-  hfpef_index <- which(
-    metadata$condition ==
-      "HFpEF"
+  training_sd <- apply(
+    train_matrix,
+    2L,
+    stats::sd,
+    na.rm = TRUE
   )
 
-  desired_activity[hfpef_index] <-
-    control_reference
-
-  delta_activity <-
-    desired_activity -
-    observed_activity
-
-  signed_weights <-
-    as.numeric(
-      network_tf$mor
-    ) *
-    as.numeric(
-      network_tf$weight
-    )
-
-  signed_weights[
-    !is.finite(signed_weights)
+  training_mean[
+    !is.finite(training_mean)
   ] <- 0
 
-  denominator_absolute <- sum(
-    abs(signed_weights)
+  training_sd[
+    !is.finite(training_sd) |
+      training_sd == 0
+  ] <- 1
+
+  for (
+    column_index in seq_len(
+      ncol(train_matrix)
+    )
+  ) {
+    train_missing <- !is.finite(
+      train_matrix[
+        ,
+        column_index
+      ]
+    )
+
+    test_missing <- !is.finite(
+      test_matrix[
+        ,
+        column_index
+      ]
+    )
+
+    train_matrix[
+      train_missing,
+      column_index
+    ] <- training_mean[
+      column_index
+    ]
+
+    test_matrix[
+      test_missing,
+      column_index
+    ] <- training_mean[
+      column_index
+    ]
+  }
+
+  train_z <- sweep(
+    train_matrix,
+    2L,
+    training_mean,
+    "-"
   )
 
-  denominator_squared <- sum(
-    signed_weights^2
+  train_z <- sweep(
+    train_z,
+    2L,
+    training_sd,
+    "/"
   )
+
+  test_z <- sweep(
+    test_matrix,
+    2L,
+    training_mean,
+    "-"
+  )
+
+  test_z <- sweep(
+    test_z,
+    2L,
+    training_sd,
+    "/"
+  )
+
+  list(
+    train_z = train_z,
+    test_z = test_z,
+    mean = training_mean,
+    sd = training_sd
+  )
+}
+
+expit <- function(x) {
+  x <- pmax(
+    pmin(
+      as.numeric(x),
+      35
+    ),
+    -35
+  )
+
+  1 /
+    (
+      1 +
+        exp(-x)
+    )
+}
+
+fit_ridge_logistic <- function(
+  x,
+  y,
+  lambda
+) {
+  x <- as.matrix(x)
+  y <- as.numeric(y)
 
   if (
-    !is.finite(
-      denominator_absolute
-    ) ||
-    denominator_absolute <= 0 ||
-    !is.finite(
-      denominator_squared
-    ) ||
-    denominator_squared <= 0
+    nrow(x) != length(y) ||
+    length(unique(y)) != 2L
   ) {
     stop(
-      "Invalid target weights for ",
-      tf_requested
+      "Ridge logistic fit requires aligned rows and both classes."
     )
   }
 
-  gene_coefficients <-
-    signed_weights *
-    denominator_absolute /
-    denominator_squared
+  objective <- function(parameters) {
+    intercept <- parameters[1L]
+    coefficients <- parameters[-1L]
 
-  target_delta <- outer(
-    gene_coefficients,
-    delta_activity,
-    "*"
-  )
-
-  target_delta <- pmax(
-    pmin(
-      target_delta,
-      MAX_ABS_GENE_SHIFT_SD
-    ),
-    -MAX_ABS_GENE_SHIFT_SD
-  )
-
-  rownames(target_delta) <-
-    network_tf$target_feature
-
-  colnames(target_delta) <-
-    sample_ids
-
-  perturbed_z <- observed_z
-
-  perturbed_z[
-    network_tf$target_feature,
-    sample_ids
-  ] <- perturbed_z[
-    network_tf$target_feature,
-    sample_ids,
-    drop = FALSE
-  ] + target_delta
-
-  list(
-    perturbed_z = perturbed_z,
-    target_count =
-      nrow(network_tf),
-    global_rms_shift_HFpEF =
-      sqrt(
-        mean(
-          target_delta[
-            ,
-            metadata$condition ==
-              "HFpEF",
-            drop = FALSE
-          ]^2,
-          na.rm = TRUE
-        )
+    linear_predictor <-
+      intercept +
+      as.numeric(
+        x %*% coefficients
       )
-  )
-}
 
-summarize_perturbation <- function(
-  observed_scores,
-  perturbed_scores,
-  sample_meta,
-  program_summary
-) {
-  metadata <- data.table::copy(
-    sample_meta
-  )
-
-  metadata <- metadata[
-    match(
-      colnames(
-        observed_scores
-      ),
-      sample_accession
+    probability <- expit(
+      linear_predictor
     )
-  ]
 
-  control_index <- which(
-    metadata$condition ==
-      "Control"
-  )
-
-  hfpef_index <- which(
-    metadata$condition ==
-      "HFpEF"
-  )
-
-  records <- lapply(
-    rownames(observed_scores),
-    function(program_id) {
-      control_values <- as.numeric(
-        observed_scores[
-          program_id,
-          control_index
-        ]
-      )
-
-      observed_hfpef <- as.numeric(
-        observed_scores[
-          program_id,
-          hfpef_index
-        ]
-      )
-
-      perturbed_hfpef <- as.numeric(
-        perturbed_scores[
-          program_id,
-          hfpef_index
-        ]
-      )
-
-      control_mean <- mean(
-        control_values,
-        na.rm = TRUE
-      )
-
-      observed_hfpef_mean <- mean(
-        observed_hfpef,
-        na.rm = TRUE
-      )
-
-      perturbed_hfpef_mean <- mean(
-        perturbed_hfpef,
-        na.rm = TRUE
-      )
-
-      observed_gap <-
-        observed_hfpef_mean -
-        control_mean
-
-      perturbed_gap <-
-        perturbed_hfpef_mean -
-        control_mean
-
-      gap_reduction <-
-        abs(observed_gap) -
-        abs(perturbed_gap)
-
-      data.table::data.table(
-        program_id = program_id,
-        observed_control_mean =
-          control_mean,
-        observed_hfpef_mean =
-          observed_hfpef_mean,
-        perturbed_hfpef_mean =
-          perturbed_hfpef_mean,
-        observed_gap =
-          observed_gap,
-        perturbed_gap =
-          perturbed_gap,
-        absolute_gap_reduction =
-          gap_reduction,
-        recovery_fraction = if (
-          is.finite(observed_gap) &&
-          abs(observed_gap) >=
-            MIN_ABS_OBSERVED_PROGRAM_GAP
-        ) {
-          gap_reduction /
-            abs(observed_gap)
-        } else {
-          NA_real_
-        },
-        observed_gap_eligible = (
-          is.finite(observed_gap) &&
-            abs(observed_gap) >=
-              MIN_ABS_OBSERVED_PROGRAM_GAP
-        ),
-        sample_improvement_fraction =
-          mean(
-            abs(
-              perturbed_hfpef -
-                control_mean
-            ) <
-              abs(
-                observed_hfpef -
-                  control_mean
-              ),
-            na.rm = TRUE
+    negative_log_likelihood <-
+      -sum(
+        y * log(
+          pmax(
+            probability,
+            1e-15
+          )
+        ) +
+          (
+            1 -
+              y
+          ) *
+          log(
+            pmax(
+              1 -
+                probability,
+              1e-15
+            )
           )
       )
-    }
+
+    ridge_penalty <-
+      0.5 *
+      lambda *
+      sum(
+        coefficients^2
+      )
+
+    negative_log_likelihood +
+      ridge_penalty
+  }
+
+  gradient <- function(parameters) {
+    intercept <- parameters[1L]
+    coefficients <- parameters[-1L]
+
+    linear_predictor <-
+      intercept +
+      as.numeric(
+        x %*% coefficients
+      )
+
+    probability <- expit(
+      linear_predictor
+    )
+
+    residual <- probability - y
+
+    c(
+      sum(residual),
+      as.numeric(
+        crossprod(
+          x,
+          residual
+        )
+      ) +
+        lambda *
+        coefficients
+    )
+  }
+
+  initial_intercept <- stats::qlogis(
+    min(
+      max(
+        mean(y),
+        0.05
+      ),
+      0.95
+    )
   )
 
-  detail <- data.table::rbindlist(
-    records,
-    use.names = TRUE,
-    fill = TRUE
+  initial_parameters <- c(
+    initial_intercept,
+    rep(
+      0,
+      ncol(x)
+    )
   )
 
-  merge(
-    detail,
-    program_summary,
-    by = "program_id",
-    all.x = TRUE
+  optimization_attempts <- list()
+
+  optimization_attempts[["BFGS"]] <- tryCatch(
+    stats::optim(
+      par = initial_parameters,
+      fn = objective,
+      gr = gradient,
+      method = "BFGS",
+      control = list(
+        maxit =
+          RIDGE_MAX_ITERATIONS,
+        reltol =
+          RIDGE_CONVERGENCE_TOLERANCE
+      ),
+      hessian = FALSE
+    ),
+    error = function(e) NULL
   )
-}
 
-result_summary <- function(
-  detail_table
-) {
-  primary_stage2 <- detail_table[
-    program_category ==
-      "Stage2_drug_opposed_net" &
-      primary_program == TRUE &
-      observed_gap_eligible == TRUE
-  ]
-
-  all_stage2 <- detail_table[
-    program_category ==
-      "Stage2_drug_opposed_net" &
-      observed_gap_eligible == TRUE
-  ]
-
-  supported_primary <- primary_stage2[
-    support_class ==
-      "Stage3_supported"
-  ]
-
-  inflammation <- detail_table[
-    program_category ==
-      "Functional_state" &
-      subset_name %in%
-        c(
-          "Inflammatory_Il1b",
-          "NFkB_TNF_response",
-          "Inflammasome_pyroptosis",
-          "Interferon_response"
-        ) &
-      observed_gap_eligible == TRUE
-  ]
-
-  myeloid <- detail_table[
-    program_category ==
-      "Functional_state" &
-      subset_name ==
-        "Myeloid_identity"
-  ]
-
-  data.table::data.table(
-    primary_programs_evaluated =
-      nrow(primary_stage2),
-    primary_median_gap_reduction =
-      safe_median(
-        primary_stage2$
-          absolute_gap_reduction,
-        0
-      ),
-    primary_median_recovery_fraction =
-      safe_median(
-        primary_stage2$
-          recovery_fraction,
-        0
-      ),
-    primary_positive_fraction =
-      safe_mean(
-        primary_stage2$
-          absolute_gap_reduction > 0,
-        0
-      ),
-    allsize_positive_fraction =
-      safe_mean(
-        all_stage2$
-          absolute_gap_reduction > 0,
-        0
-      ),
-    sample_improvement_fraction =
-      safe_median(
-        primary_stage2$
-          sample_improvement_fraction,
-        0
-      ),
-    supported_primary_median_gap_reduction =
-      safe_median(
-        supported_primary$
-          absolute_gap_reduction,
-        0
-      ),
-    inflammation_median_gap_reduction =
-      safe_median(
-        inflammation$
-          absolute_gap_reduction,
-        0
-      ),
-    myeloid_identity_absolute_change =
-      safe_median(
-        abs(
-          myeloid$
-            perturbed_hfpef_mean -
-            myeloid$
-              observed_hfpef_mean
-        ),
-        0
+  bfgs_valid <- (
+    !is.null(
+      optimization_attempts[["BFGS"]]
+    ) &&
+      length(
+        optimization_attempts[["BFGS"]]$par
+      ) ==
+        ncol(x) + 1L &&
+      all(
+        is.finite(
+          optimization_attempts[["BFGS"]]$par
+        )
       )
   )
-}
 
-evaluate_tf <- function(
-  tf_requested,
-  network_table,
-  activity_matrix,
-  sample_z,
-  sample_meta,
-  program_definitions,
-  program_summary,
-  observed_program_scores
-) {
-  simulation <- simulate_normalization(
-    observed_z = sample_z,
-    activity_matrix =
-      activity_matrix,
-    tf_requested =
-      tf_requested,
-    network_table =
-      network_table,
-    sample_meta =
-      sample_meta
-  )
+  if (
+    !bfgs_valid ||
+    optimization_attempts[["BFGS"]]$convergence !=
+      0L
+  ) {
+    start_parameters <- if (
+      bfgs_valid
+    ) {
+      optimization_attempts[["BFGS"]]$par
+    } else {
+      initial_parameters
+    }
 
-  perturbed_scores <- score_programs(
-    simulation$perturbed_z,
-    program_definitions
-  )
+    optimization_attempts[["L-BFGS-B"]] <- tryCatch(
+      stats::optim(
+        par = start_parameters,
+        fn = objective,
+        gr = gradient,
+        method = "L-BFGS-B",
+        control = list(
+          maxit =
+            RIDGE_MAX_ITERATIONS,
+          factr = 1e7,
+          pgtol =
+            RIDGE_CONVERGENCE_TOLERANCE
+        ),
+        hessian = FALSE
+      ),
+      error = function(e) NULL
+    )
+  }
 
-  detail <- summarize_perturbation(
-    observed_scores =
-      observed_program_scores,
-    perturbed_scores =
-      perturbed_scores,
-    sample_meta =
-      sample_meta,
-    program_summary =
-      program_summary
-  )
-
-  summary <- result_summary(
-    detail
-  )
-
-  summary[
-    ,
-    `:=`(
-      tf_symbol =
-        tf_requested,
-      target_count =
-        simulation$target_count,
-      global_rms_shift_HFpEF =
-        simulation$
-          global_rms_shift_HFpEF,
-      specificity_score =
-        1 /
-        (
-          1 +
-            simulation$
-              global_rms_shift_HFpEF +
-            myeloid_identity_absolute_change
-        )
+  valid_attempts <- optimization_attempts[
+    vapply(
+      optimization_attempts,
+      function(attempt_i) {
+        !is.null(attempt_i) &&
+          length(attempt_i$par) ==
+            ncol(x) + 1L &&
+          all(
+            is.finite(
+              attempt_i$par
+            )
+          ) &&
+          is.finite(
+            attempt_i$value
+          )
+      },
+      logical(1)
     )
   ]
 
-  list(
-    detail = detail,
-    summary = summary
+  if (length(valid_attempts) == 0L) {
+    return(
+      list(
+        intercept =
+          initial_intercept,
+        coefficients =
+          rep(
+            0,
+            ncol(x)
+          ),
+        converged = FALSE,
+        convergence_code = NA_integer_,
+        optimization_method =
+          "intercept_only_fallback",
+        objective = NA_real_
+      )
+    )
+  }
+
+  converged_attempts <- valid_attempts[
+    vapply(
+      valid_attempts,
+      function(attempt_i) {
+        attempt_i$convergence == 0L
+      },
+      logical(1)
+    )
+  ]
+
+  selected_pool <- if (
+    length(converged_attempts) >
+      0L
+  ) {
+    converged_attempts
+  } else {
+    valid_attempts
+  }
+
+  selected_index <- which.min(
+    vapply(
+      selected_pool,
+      function(attempt_i) {
+        attempt_i$value
+      },
+      numeric(1)
+    )
   )
+
+  selected_name <- names(
+    selected_pool
+  )[selected_index]
+
+  optimization <- selected_pool[[selected_index]]
+
+  list(
+    intercept =
+      optimization$par[1L],
+    coefficients =
+      optimization$par[-1L],
+    converged =
+      optimization$convergence == 0L,
+    convergence_code =
+      optimization$convergence,
+    optimization_method =
+      selected_name,
+    objective =
+      optimization$value
+  )
+}
+
+save_plot_bundle <- function(
+  plot_object,
+  stem,
+  width,
+  height
+) {
+  if (
+    !inherits(
+      plot_object,
+      "ggplot"
+    )
+  ) {
+    stop(
+      "Expected a ggplot object for ",
+      stem,
+      "."
+    )
+  }
+
+  width <- min(
+    max(
+      as.numeric(width),
+      3
+    ),
+    MAX_FIGURE_WIDTH_IN
+  )
+
+  height <- min(
+    max(
+      as.numeric(height),
+      3
+    ),
+    MAX_FIGURE_HEIGHT_IN
+  )
+
+  paths <- c(
+    png = file.path(
+      DIRS$figures,
+      paste0(
+        stem,
+        ".png"
+      )
+    ),
+    pdf = file.path(
+      DIRS$figures,
+      paste0(
+        stem,
+        ".pdf"
+      )
+    ),
+    tiff = file.path(
+      DIRS$figures,
+      paste0(
+        stem,
+        ".tiff"
+      )
+    )
+  )
+
+  ggplot2::ggsave(
+    filename = paths["png"],
+    plot = plot_object,
+    width = width,
+    height = height,
+    units = "in",
+    dpi = 300,
+    limitsize = TRUE,
+    bg = "white"
+  )
+
+  ggplot2::ggsave(
+    filename = paths["pdf"],
+    plot = plot_object,
+    width = width,
+    height = height,
+    units = "in",
+    limitsize = TRUE,
+    bg = "white"
+  )
+
+  ggplot2::ggsave(
+    filename = paths["tiff"],
+    plot = plot_object,
+    width = width,
+    height = height,
+    units = "in",
+    dpi = 600,
+    compression = "lzw",
+    limitsize = TRUE,
+    bg = "white"
+  )
+
+  if (
+    any(
+      !file.exists(paths)
+    ) ||
+    any(
+      !is.finite(
+        as.numeric(
+          file.info(paths)$size
+        )
+      ) |
+        as.numeric(
+          file.info(paths)$size
+        ) <= 0
+    )
+  ) {
+    stop(
+      "Figure export validation failed for ",
+      stem,
+      "."
+    )
+  }
+
+  invisible(paths)
 }
 
 ############################################################
-## 5. Load and lock input objects
+## 3. Lock upstream completion states
+############################################################
+
+stage3_status <- data.table::fread(
+  STAGE3_STATUS_FILE,
+  encoding = "UTF-8"
+)
+
+stage4_status <- data.table::fread(
+  STAGE4_STATUS_FILE,
+  encoding = "UTF-8"
+)
+
+stage5b_status <- data.table::fread(
+  STAGE5B_STATUS_FILE,
+  encoding = "UTF-8"
+)
+
+stage6_status <- data.table::fread(
+  STAGE6_STATUS_FILE,
+  encoding = "UTF-8"
+)
+
+stage3_checks <- data.table::fread(
+  STAGE3_CHECKS_FILE,
+  encoding = "UTF-8"
+)
+
+stage4_checks <- data.table::fread(
+  STAGE4_CHECKS_FILE,
+  encoding = "UTF-8"
+)
+
+stage5b_checks <- data.table::fread(
+  STAGE5B_CHECKS_FILE,
+  encoding = "UTF-8"
+)
+
+stage6_checks <- data.table::fread(
+  STAGE6_CHECKS_FILE,
+  encoding = "UTF-8"
+)
+
+expected_status <- c(
+  Stage3 =
+    "COMPLETED_STAGE3_READY_FOR_REVIEW",
+  Stage4 =
+    "COMPLETED_STAGE4_READY_FOR_REVIEW",
+  Stage5B =
+    "COMPLETED_STAGE5B_OFFLINE_READY_FOR_REVIEW",
+  Stage6 =
+    "COMPLETED_STAGE6_READY_FOR_REVIEW"
+)
+
+observed_status <- c(
+  Stage3 =
+    stage3_status$overall_status[1L],
+  Stage4 =
+    stage4_status$overall_status[1L],
+  Stage5B =
+    stage5b_status$overall_status[1L],
+  Stage6 =
+    stage6_status$overall_status[1L]
+)
+
+if (
+  !identical(
+    unname(observed_status),
+    unname(expected_status)
+  )
+) {
+  stop(
+    "One or more upstream stages are not in the required completed state:\n",
+    paste(
+      names(observed_status),
+      observed_status,
+      sep = "=",
+      collapse = "\n"
+    )
+  )
+}
+
+for (check_table in list(
+  stage3_checks,
+  stage4_checks,
+  stage5b_checks,
+  stage6_checks
+)) {
+  if (
+    !all(
+      c(
+        "check",
+        "status"
+      ) %in%
+        names(check_table)
+    ) ||
+    any(
+      check_table$status !=
+        "PASS"
+    )
+  ) {
+    stop(
+      "At least one upstream scientific completion check is not PASS."
+    )
+  }
+}
+
+upstream_status_audit <- data.table::data.table(
+  stage = names(
+    observed_status
+  ),
+  observed_status =
+    unname(
+      observed_status
+    ),
+  expected_status =
+    unname(
+      expected_status
+    ),
+  status_match = (
+    unname(
+      observed_status
+    ) ==
+      unname(
+        expected_status
+      )
+  )
+)
+
+write_csv_safe(
+  upstream_status_audit,
+  file.path(
+    DIRS$tables,
+    "00_stage7_upstream_status_audit.csv"
+  )
+)
+
+############################################################
+## 4. Load sample-level upstream data
 ############################################################
 
 sample_meta <- data.table::fread(
@@ -2298,27 +1785,12 @@ if (
   ) != 3L
 ) {
   stop(
-    "The locked sample metadata is not the expected 3 + 3 design."
+    "Stage 7 requires the locked 3-Control plus 3-HFpEF sample design."
   )
 }
 
-network_table <- read_table_auto(
-  STAGE4_NETWORK_FILE
-)
-
-locked_regulon_sizes <- read_table_auto(
-  STAGE4_REGULON_SIZE_FILE
-)
-
-program_manifest <- read_table_auto(
-  STAGE4_PROGRAM_FILE
-)
-
-stage5_candidate_table <-
-  data.table::fread(
-    STAGE5_CANDIDATE_FILE,
-    encoding = "UTF-8"
-  )
+sample_order <- sample_meta$
+  sample_accession
 
 pseudobulk_objects <- readRDS(
   STAGE4_PSEUDOBULK_RDS
@@ -2326,7 +1798,9 @@ pseudobulk_objects <- readRDS(
 
 if (
   !"sample_logcpm" %in%
-    names(pseudobulk_objects)
+    names(
+      pseudobulk_objects
+    )
 ) {
   stop(
     "Stage 4 pseudobulk object does not contain sample_logcpm."
@@ -2344,21 +1818,22 @@ stage4_activity <- as.matrix(
   )
 )
 
-sample_order <-
-  sample_meta$sample_accession
-
 if (
   !all(
     sample_order %in%
-      colnames(sample_logcpm)
+      colnames(
+        sample_logcpm
+      )
   ) ||
   !all(
     sample_order %in%
-      colnames(stage4_activity)
+      colnames(
+        stage4_activity
+      )
   )
 ) {
   stop(
-    "One or more locked samples are missing from the Stage 4 matrices."
+    "Stage 4 sample matrices do not contain all six locked samples."
   )
 }
 
@@ -2374,168 +1849,81 @@ stage4_activity <- stage4_activity[
   drop = FALSE
 ]
 
-if ("tf_symbol" %in% names(network_table)) {
-  network_table[
-    ,
-    tf_symbol := NULL
-  ]
-}
-
-required_network_columns <- c(
-  "source_symbol",
-  "target_feature",
-  "mor",
-  "weight"
+program_manifest <- read_table_auto(
+  STAGE4_PROGRAM_FILE
 )
 
-missing_network_columns <- setdiff(
-  required_network_columns,
-  names(network_table)
+stage5b_rank <- data.table::fread(
+  STAGE5B_RANK_FILE,
+  encoding = "UTF-8"
 )
 
-if (
-  length(
-    missing_network_columns
-  ) > 0L
+stage6_axes <- read_table_auto(
+  STAGE6_AXES_FILE
+)
+
+stage6_expression <- read_table_auto(
+  STAGE6_EXPRESSION_FILE
+)
+
+stage6_candidate_summary <- data.table::fread(
+  STAGE6_CANDIDATE_SUMMARY_FILE,
+  encoding = "UTF-8"
+)
+
+for (
+  object_name_i in c(
+    "sample_meta",
+    "program_manifest",
+    "stage5b_rank",
+    "stage6_axes",
+    "stage6_expression",
+    "stage6_candidate_summary"
+  )
 ) {
-  stop(
-    "Stage 4 network is missing column(s): ",
-    paste(
-      missing_network_columns,
-      collapse = ", "
-    )
-  )
-}
-
-network_table[
-  ,
-  mor := as.numeric(mor)
-]
-
-network_table[
-  ,
-  weight := as.numeric(weight)
-]
-
-network_table <- network_table[
-  !is.na(source_symbol) &
-    nzchar(source_symbol) &
-    !is.na(target_feature) &
-    nzchar(target_feature) &
-    is.finite(mor) &
-    mor != 0 &
-    is.finite(weight) &
-    weight > 0
-]
-
-data.table::setorder(
-  network_table,
-  source_symbol,
-  target_feature,
-  -weight
-)
-
-network_table <- network_table[
-  ,
-  .SD[1L],
-  by = .(
-    source_symbol,
-    target_feature
-  )
-]
-
-observed_regulon_sizes <-
-  network_table[
-    ,
-    .(
-      observed_regulon_size =
-        data.table::uniqueN(
-          target_feature
-        )
+  assert_unique_column_names(
+    get(
+      object_name_i,
+      inherits = FALSE
     ),
-    by = source_symbol
-  ]
-
-network_integrity <- merge(
-  locked_regulon_sizes[
-    ,
-    .(
-      source_symbol,
-      locked_regulon_size =
-        as.integer(
-          regulon_size
-        )
-    )
-  ],
-  observed_regulon_sizes,
-  by = "source_symbol",
-  all = TRUE
-)
-
-network_integrity[
-  ,
-  target_count_match := (
-    !is.na(
-      locked_regulon_size
-    ) &
-      !is.na(
-        observed_regulon_size
-      ) &
-      locked_regulon_size ==
-        observed_regulon_size
-  )
-]
-
-if (
-  any(
-    network_integrity$
-      target_count_match != TRUE
-  )
-) {
-  failed_sources <- network_integrity[
-    target_count_match != TRUE,
-    source_symbol
-  ]
-
-  stop(
-    "Stage 4 network integrity mismatch for: ",
-    paste(
-      failed_sources,
-      collapse = ", "
-    )
+    object_name_i
   )
 }
 
-candidate_key_table <-
-  data.table::data.table(
-    requested_tf =
-      CANDIDATE_TFS_REQUESTED,
-    requested_order =
-      seq_along(
-        CANDIDATE_TFS_REQUESTED
-      ),
-    tf_key =
-      gene_key(
-        CANDIDATE_TFS_REQUESTED
-      )
-  )
+############################################################
+## 5. Candidate and input-column validation
+############################################################
 
-network_source_map <- unique(
-  network_table[
-    ,
-    .(
-      tf_key =
-        gene_key(source_symbol),
-      source_symbol
+candidate_resolution <- data.table::data.table(
+  requested_tf =
+    CANDIDATE_TFS,
+  requested_key =
+    gene_key(
+      CANDIDATE_TFS
+    ),
+  requested_order =
+    seq_along(
+      CANDIDATE_TFS
     )
-  ],
-  by = "tf_key"
+)
+
+activity_resolution <- data.table::data.table(
+  activity_symbol =
+    rownames(
+      stage4_activity
+    ),
+  requested_key =
+    gene_key(
+      rownames(
+        stage4_activity
+      )
+    )
 )
 
 candidate_resolution <- merge(
-  candidate_key_table,
-  network_source_map,
-  by = "tf_key",
+  candidate_resolution,
+  activity_resolution,
+  by = "requested_key",
   all.x = TRUE,
   sort = FALSE
 )
@@ -2548,16 +1936,29 @@ data.table::setorder(
 candidate_resolution[
   ,
   activity_available := (
-    !is.na(source_symbol) &
-      source_symbol %in%
-        rownames(stage4_activity)
+    !is.na(activity_symbol) &
+      activity_symbol %in%
+        rownames(
+          stage4_activity
+        )
   )
 ]
+
+assert_unique_column_names(
+  candidate_resolution,
+  "candidate_resolution"
+)
+
+assert_unique_rows_by(
+  candidate_resolution,
+  "requested_key",
+  "candidate_resolution"
+)
 
 if (
   nrow(candidate_resolution) !=
     length(
-      CANDIDATE_TFS_REQUESTED
+      CANDIDATE_TFS
     ) ||
   any(
     candidate_resolution$
@@ -2565,1725 +1966,2545 @@ if (
   )
 ) {
   stop(
-    "At least one prespecified candidate TF is unavailable in the locked Stage 4 network or activity matrix."
+    "One or more Stage 7 candidate TF activities are unavailable."
   )
 }
 
-candidate_tfs <-
-  candidate_resolution$
-    source_symbol
-
-feature_map <- make_feature_map(
-  rownames(sample_logcpm)
+required_program_columns <- c(
+  "program_name",
+  "direction",
+  "signature_size",
+  "symbol_key"
 )
 
-program_objects <- make_program_definitions(
-  program_manifest,
-  feature_map
+missing_program_columns <- setdiff(
+  required_program_columns,
+  names(program_manifest)
 )
 
-program_definitions <-
-  program_objects$definitions
-
-program_summary <-
-  program_objects$summary
-
-sample_z <- scale_rows(
-  sample_logcpm
-)
-
-observed_program_scores <-
-  score_programs(
-    sample_z,
-    program_definitions
-  )
-
-eligible_primary_programs <- program_summary[
-  program_category ==
-    "Stage2_drug_opposed_net" &
-    primary_program == TRUE,
-  data.table::uniqueN(
-    program_id
-  )
-]
-
-if (
-  eligible_primary_programs <
-    2L
-) {
+if (length(missing_program_columns) > 0L) {
   stop(
-    "Fewer than two primary Stage 2 programs are available."
-  )
-}
-
-write_csv_safe(
-  network_integrity,
-  file.path(
-    DIRS$tables,
-    "00_stage5B_network_integrity_audit.csv"
-  )
-)
-
-write_csv_safe(
-  candidate_resolution,
-  file.path(
-    DIRS$tables,
-    "01_stage5B_candidate_resolution.csv"
-  )
-)
-
-write_csv_safe(
-  program_summary,
-  file.path(
-    DIRS$tables,
-    "02_stage5B_program_definition_summary.csv"
-  )
-)
-
-############################################################
-## 6. Recalculate full candidate effects and audit Stage 5
-############################################################
-
-full_detail_records <- list()
-full_summary_records <- list()
-
-for (
-  candidate_i in candidate_tfs
-) {
-  log_msg(
-    "Full-regulon candidate evaluation: ",
-    candidate_i
-  )
-
-  candidate_result <- evaluate_tf(
-    tf_requested =
-      candidate_i,
-    network_table =
-      network_table,
-    activity_matrix =
-      stage4_activity,
-    sample_z =
-      sample_z,
-    sample_meta =
-      sample_meta,
-    program_definitions =
-      program_definitions,
-    program_summary =
-      program_summary,
-    observed_program_scores =
-      observed_program_scores
-  )
-
-  detail_i <- data.table::copy(
-    candidate_result$detail
-  )
-
-  detail_i[
-    ,
-    tf_symbol := candidate_i
-  ]
-
-  full_detail_records[[length(full_detail_records) + 1L]] <- detail_i
-
-  full_summary_records[[length(full_summary_records) + 1L]] <- candidate_result$summary
-}
-
-full_candidate_detail <-
-  data.table::rbindlist(
-    full_detail_records,
-    use.names = TRUE,
-    fill = TRUE
-  )
-
-full_candidate_summary <-
-  data.table::rbindlist(
-    full_summary_records,
-    use.names = TRUE,
-    fill = TRUE
-  )
-
-stage5_required_columns <- c(
-  "tf_symbol",
-  "stage2_primary_median_gap_reduction"
-)
-
-missing_stage5_columns <- setdiff(
-  stage5_required_columns,
-  names(stage5_candidate_table)
-)
-
-if (
-  length(
-    missing_stage5_columns
-  ) > 0L
-) {
-  stop(
-    "Stage 5 candidate table is missing audit column(s): ",
+    "Stage 4 program manifest is missing column(s): ",
     paste(
-      missing_stage5_columns,
+      missing_program_columns,
       collapse = ", "
     )
   )
 }
 
-stage5_audit <- merge(
-  full_candidate_summary[
-    ,
-    .(
-      tf_symbol,
-      recalculated_primary_gap_reduction =
-        primary_median_gap_reduction,
-      recalculated_target_count =
-        target_count
-    )
-  ],
-  stage5_candidate_table[
-    tf_symbol %in%
-      candidate_tfs,
-    .(
-      tf_symbol,
-      stage5_primary_gap_reduction =
-        stage2_primary_median_gap_reduction
-    )
-  ],
-  by = "tf_symbol",
-  all = TRUE
+required_axis_columns <- c(
+  "tf_symbol",
+  "final_axis_rank",
+  "final_axis_score",
+  "sender_ligand_feature",
+  "receptor_component_features",
+  "receiver",
+  "mean_delta_z_HFpEF",
+  "predicted_receiver_direction",
+  "strict_cross_stage_support",
+  "axis_id"
 )
 
-stage5_audit[
-  ,
-  absolute_difference := abs(
-    recalculated_primary_gap_reduction -
-      stage5_primary_gap_reduction
-  )
-]
+missing_axis_columns <- setdiff(
+  required_axis_columns,
+  names(stage6_axes)
+)
 
-stage5_audit[
-  ,
-  within_tolerance := (
-    is.finite(
-      absolute_difference
-    ) &
-      absolute_difference <=
-        STAGE5_AUDIT_TOLERANCE
+if (length(missing_axis_columns) > 0L) {
+  stop(
+    "Stage 6 axis table is missing column(s): ",
+    paste(
+      missing_axis_columns,
+      collapse = ", "
+    )
   )
-]
+}
+
+required_expression_columns <- c(
+  "feature",
+  "feature_key",
+  "major_cell_type",
+  "sample_accession",
+  "condition",
+  "log2_cpm",
+  "pct_expressed"
+)
+
+missing_expression_columns <- setdiff(
+  required_expression_columns,
+  names(stage6_expression)
+)
+
+if (length(missing_expression_columns) > 0L) {
+  stop(
+    "Stage 6 sample-level expression table is missing column(s): ",
+    paste(
+      missing_expression_columns,
+      collapse = ", "
+    )
+  )
+}
+
+required_stage5b_candidate_columns <- c(
+  "tf_symbol",
+  "final_robustness_rank",
+  "final_robustness_score",
+  "positive_recovery_probability",
+  "candidate_percentile"
+)
+
+missing_stage5b_candidate_columns <- setdiff(
+  required_stage5b_candidate_columns,
+  names(stage5b_rank)
+)
+
+if (length(missing_stage5b_candidate_columns) > 0L) {
+  stop(
+    "Stage 5B candidate table is missing column(s): ",
+    paste(
+      missing_stage5b_candidate_columns,
+      collapse = ", "
+    )
+  )
+}
+
+required_stage6_candidate_columns <- c(
+  "tf_symbol",
+  "candidate_role",
+  "total_axes",
+  "strict_cross_stage_axes",
+  "best_axis_rank"
+)
+
+missing_stage6_candidate_columns <- setdiff(
+  required_stage6_candidate_columns,
+  names(stage6_candidate_summary)
+)
+
+if (length(missing_stage6_candidate_columns) > 0L) {
+  stop(
+    "Stage 6 candidate summary is missing column(s): ",
+    paste(
+      missing_stage6_candidate_columns,
+      collapse = ", "
+    )
+  )
+}
+
+candidate_cross_stage_manifest <- merge(
+  candidate_resolution,
+  stage5b_rank[
+    gene_key(tf_symbol) %in%
+      gene_key(CANDIDATE_TFS),
+    .(
+      requested_key =
+        gene_key(tf_symbol),
+      stage5b_tf_symbol =
+        tf_symbol,
+      final_robustness_rank,
+      final_robustness_score,
+      positive_recovery_probability,
+      candidate_percentile
+    )
+  ],
+  by = "requested_key",
+  all.x = TRUE
+)
+
+candidate_cross_stage_manifest <- merge(
+  candidate_cross_stage_manifest,
+  stage6_candidate_summary[
+    gene_key(tf_symbol) %in%
+      gene_key(CANDIDATE_TFS),
+    .(
+      requested_key =
+        gene_key(tf_symbol),
+      stage6_tf_symbol =
+        tf_symbol,
+      candidate_role,
+      total_axes,
+      strict_cross_stage_axes,
+      best_axis_rank
+    )
+  ],
+  by = "requested_key",
+  all.x = TRUE
+)
+
+data.table::setorder(
+  candidate_cross_stage_manifest,
+  requested_order
+)
+
+assert_unique_column_names(
+  candidate_cross_stage_manifest,
+  "candidate_cross_stage_manifest"
+)
+
+assert_unique_rows_by(
+  candidate_cross_stage_manifest,
+  "requested_key",
+  "candidate_cross_stage_manifest"
+)
 
 if (
-  nrow(stage5_audit) !=
-    length(candidate_tfs) ||
+  nrow(candidate_cross_stage_manifest) !=
+    length(CANDIDATE_TFS) ||
   any(
-    stage5_audit$
-      within_tolerance != TRUE
+    is.na(
+      candidate_cross_stage_manifest$
+        final_robustness_rank
+    )
+  ) ||
+  any(
+    is.na(
+      candidate_cross_stage_manifest$
+        total_axes
+    )
   )
 ) {
   stop(
-    "Recalculated full-regulon candidate results do not reproduce Stage 5 v2 within tolerance."
+    "The prespecified Stage 7 candidates are not fully represented across Stage 5B and Stage 6."
   )
 }
 
 write_csv_safe(
-  full_candidate_detail,
+  candidate_resolution,
   file.path(
     DIRS$tables,
-    "03_stage5B_full_candidate_program_effects.csv"
-  ),
-  compress = TRUE
-)
-
-write_csv_safe(
-  full_candidate_summary,
-  file.path(
-    DIRS$tables,
-    "04_stage5B_full_candidate_summary.csv"
+    "01_stage7_candidate_TF_resolution.csv"
   )
 )
 
 write_csv_safe(
-  stage5_audit,
+  candidate_cross_stage_manifest,
   file.path(
     DIRS$tables,
-    "05_stage5B_stage5_v2_reproduction_audit.csv"
+    "01A_stage7_candidate_cross_stage_manifest.csv"
   )
 )
 
 ############################################################
-## 7. Candidate regulon bootstrap
+## 6. Build prespecified cross-stage features
 ############################################################
 
-bootstrap_records <- list()
+sample_features <- data.table::data.table(
+  sample_accession =
+    sample_order,
+  sample_order_index =
+    seq_along(
+      sample_order
+    )
+)
 
-for (
-  candidate_i in candidate_tfs
+sample_features <- merge(
+  sample_features,
+  sample_meta[
+    ,
+    .(
+      sample_accession,
+      condition
+    )
+  ],
+  by = "sample_accession",
+  all.x = TRUE,
+  sort = FALSE
+)
+
+data.table::setorder(
+  sample_features,
+  sample_order_index
+)
+
+sample_features[
+  ,
+  y := ifelse(
+    condition ==
+      "HFpEF",
+    1L,
+    0L
+  )
+]
+
+assert_unique_column_names(
+  sample_features,
+  "sample_features_initial"
+)
+
+assert_unique_rows_by(
+  sample_features,
+  "sample_accession",
+  "sample_features_initial"
+)
+
+feature_definition_records <- list()
+
+for (candidate_i in CANDIDATE_TFS) {
+  activity_symbol_i <- candidate_resolution[
+    requested_tf ==
+      candidate_i,
+    activity_symbol
+  ]
+
+  feature_name <- paste0(
+    "TF_",
+    candidate_i,
+    "_activity"
+  )
+
+  sample_features[
+    ,
+    (feature_name) :=
+      as.numeric(
+        stage4_activity[
+          activity_symbol_i,
+          sample_order
+        ]
+      )
+  ]
+
+  feature_definition_records[[length(feature_definition_records) + 1L]] <- data.table::data.table(
+    feature = feature_name,
+    biological_layer =
+      "Stage4_regulon_activity",
+    definition = paste0(
+      "Locked Stage 4 weighted regulon activity for ",
+      candidate_i,
+      "."
+    ),
+    source_items =
+      activity_symbol_i,
+    prespecified_primary = (
+      feature_name %in%
+        PRIMARY_PANEL
+    ),
+    prespecified_extended = (
+      feature_name %in%
+        EXTENDED_PANEL
+    )
+  )
+}
+
+feature_map <- make_feature_map(
+  rownames(
+    sample_logcpm
+  )
+)
+
+calculate_program_score <- function(
+  support_mode
 ) {
-  candidate_network <- data.table::copy(
-    network_table[
-      source_symbol ==
-        candidate_i
+  program_i <- data.table::copy(
+    program_manifest[
+      signature_size ==
+        PRIMARY_SIGNATURE_SIZE
+    ]
+  )
+
+  program_i[
+    ,
+    support_class := ifelse(
+      grepl(
+        "Stage3Supported$",
+        program_name
+      ),
+      "Stage3_supported",
+      "Full_Stage2"
+    )
+  ]
+
+  if (
+    support_mode ==
+      "Stage3_supported"
+  ) {
+    program_i <- program_i[
+      support_class ==
+        "Stage3_supported"
+    ]
+  } else {
+    program_i <- program_i[
+      support_class ==
+        "Full_Stage2"
+    ]
+  }
+
+  up_features <- map_keys_to_features(
+    program_i[
+      direction ==
+        "Disease_up_Drug_down",
+      symbol_key
+    ],
+    feature_map
+  )
+
+  down_features <- map_keys_to_features(
+    program_i[
+      direction ==
+        "Disease_down_Drug_up",
+      symbol_key
+    ],
+    feature_map
+  )
+
+  if (
+    length(up_features) +
+      length(down_features) <
+      5L
+  ) {
+    stop(
+      "Insufficient detected genes for ",
+      support_mode,
+      " Top150 drug-opposed program."
+    )
+  }
+
+  up_score <- if (
+    length(up_features) > 0L
+  ) {
+    colMeans(
+      sample_logcpm[
+        up_features,
+        sample_order,
+        drop = FALSE
+      ],
+      na.rm = TRUE
+    )
+  } else {
+    rep(
+      0,
+      length(sample_order)
+    )
+  }
+
+  down_score <- if (
+    length(down_features) > 0L
+  ) {
+    colMeans(
+      sample_logcpm[
+        down_features,
+        sample_order,
+        drop = FALSE
+      ],
+      na.rm = TRUE
+    )
+  } else {
+    rep(
+      0,
+      length(sample_order)
+    )
+  }
+
+  list(
+    score =
+      as.numeric(
+        up_score -
+          down_score
+      ),
+    up_features =
+      up_features,
+    down_features =
+      down_features
+  )
+}
+
+program_full <- calculate_program_score(
+  "Full_Stage2"
+)
+
+program_supported <- calculate_program_score(
+  "Stage3_supported"
+)
+
+sample_features[
+  ,
+  PROGRAM_DrugOpposed_Top150 :=
+    program_full$score
+]
+
+sample_features[
+  ,
+  PROGRAM_DrugOpposed_Top150_Stage3Supported :=
+    program_supported$score
+]
+
+feature_definition_records[[length(feature_definition_records) + 1L]] <- data.table::data.table(
+  feature =
+    "PROGRAM_DrugOpposed_Top150",
+  biological_layer =
+    "Stage2_Stage4_drug_opposed_program",
+  definition =
+    "Mean macrophage log2-CPM of Top150 disease-up/drug-down genes minus disease-down/drug-up genes using the Full Stage 2 program.",
+  source_items = paste0(
+    "up=",
+    length(
+      program_full$up_features
+    ),
+    ";down=",
+    length(
+      program_full$down_features
+    )
+  ),
+  prespecified_primary = TRUE,
+  prespecified_extended = TRUE
+)
+
+feature_definition_records[[length(feature_definition_records) + 1L]] <- data.table::data.table(
+  feature =
+    "PROGRAM_DrugOpposed_Top150_Stage3Supported",
+  biological_layer =
+    "Stage2_Stage3_Stage4_supported_program",
+  definition =
+    "Mean macrophage log2-CPM of Stage3-supported Top150 disease-up/drug-down genes minus disease-down/drug-up genes.",
+  source_items = paste0(
+    "up=",
+    length(
+      program_supported$up_features
+    ),
+    ";down=",
+    length(
+      program_supported$down_features
+    )
+  ),
+  prespecified_primary = FALSE,
+  prespecified_extended = TRUE
+)
+
+build_axis_sample_scores <- function(
+  axes_table,
+  tf_filter,
+  maximum_axes,
+  feature_name
+) {
+  axes_i <- data.table::copy(
+    axes_table[
+      gene_key(tf_symbol) %in%
+        gene_key(tf_filter)
     ]
   )
 
   data.table::setorder(
-    candidate_network,
-    target_feature,
-    -weight
+    axes_i,
+    final_axis_rank,
+    final_axis_score,
+    axis_id
   )
 
-  candidate_network <-
-    candidate_network[
-      ,
-      .SD[1L],
-      by = target_feature
-    ]
+  axes_i <- unique(
+    axes_i,
+    by = "axis_id"
+  )
 
-  full_target_count <-
-    nrow(candidate_network)
-
-  bootstrap_target_count <- max(
-    MIN_TARGETS_PER_REGULON,
-    floor(
-      BOOTSTRAP_TARGET_FRACTION *
-        full_target_count
+  axes_i <- head(
+    axes_i,
+    min(
+      maximum_axes,
+      nrow(axes_i)
     )
   )
 
-  bootstrap_target_count <- min(
-    bootstrap_target_count,
-    full_target_count
-  )
-
-  log_msg(
-    "Bootstrap: ",
-    candidate_i,
-    " | full targets=",
-    full_target_count,
-    " | retained=",
-    bootstrap_target_count,
-    " | replicates=",
-    BOOTSTRAP_REPLICATES
-  )
-
-  candidate_seed_offset <- match(
-    candidate_i,
-    candidate_tfs
-  )
-
-  for (
-    bootstrap_i in seq_len(
-      BOOTSTRAP_REPLICATES
-    )
-  ) {
-    set.seed(
-      20260714 +
-        candidate_seed_offset *
-          100000L +
-        bootstrap_i
+  if (nrow(axes_i) == 0L) {
+    add_warning(
+      "COMMUNICATION_FEATURE",
+      feature_name,
+      "No Stage 6 axes were available; feature values were set to NA."
     )
 
-    sampled_rows <- sample.int(
-      full_target_count,
-      size =
-        bootstrap_target_count,
-      replace = FALSE
-    )
-
-    bootstrap_network <-
-      candidate_network[
-        sampled_rows
-      ]
-
-    bootstrap_activity <-
-      weighted_regulon_activity(
-        expression_matrix =
-          sample_logcpm,
-        network_subset =
-          bootstrap_network
+    return(
+      list(
+        score = rep(
+          NA_real_,
+          length(sample_order)
+        ),
+        axis_sample_table =
+          data.table::data.table(),
+        axes = axes_i
       )
-
-    if (
-      is.null(
-        bootstrap_activity
-      ) ||
-      !candidate_i %in%
-        rownames(
-          bootstrap_activity
-        )
-    ) {
-      stop(
-        "Bootstrap TF activity could not be computed for ",
-        candidate_i,
-        " replicate ",
-        bootstrap_i,
-        "."
-      )
-    }
-
-    bootstrap_result <- evaluate_tf(
-      tf_requested =
-        candidate_i,
-      network_table =
-        bootstrap_network,
-      activity_matrix =
-        bootstrap_activity,
-      sample_z =
-        sample_z,
-      sample_meta =
-        sample_meta,
-      program_definitions =
-        program_definitions,
-      program_summary =
-        program_summary,
-      observed_program_scores =
-        observed_program_scores
-    )
-
-    summary_i <- bootstrap_result$summary
-
-    bootstrap_records[[length(bootstrap_records) + 1L]] <- data.table::data.table(
-      tf_symbol =
-        candidate_i,
-      bootstrap_replicate =
-        bootstrap_i,
-      full_target_count =
-        full_target_count,
-      bootstrap_target_count =
-        bootstrap_target_count,
-      primary_median_gap_reduction =
-        summary_i$
-          primary_median_gap_reduction,
-      primary_median_recovery_fraction =
-        summary_i$
-          primary_median_recovery_fraction,
-      primary_positive_fraction =
-        summary_i$
-          primary_positive_fraction,
-      allsize_positive_fraction =
-        summary_i$
-          allsize_positive_fraction,
-      sample_improvement_fraction =
-        summary_i$
-          sample_improvement_fraction,
-      supported_primary_median_gap_reduction =
-        summary_i$
-          supported_primary_median_gap_reduction,
-      inflammation_median_gap_reduction =
-        summary_i$
-          inflammation_median_gap_reduction,
-      global_rms_shift_HFpEF =
-        summary_i$
-          global_rms_shift_HFpEF,
-      specificity_score =
-        summary_i$
-          specificity_score
     )
   }
-}
 
-bootstrap_results <-
-  data.table::rbindlist(
-    bootstrap_records,
+  axis_sample_records <- list()
+
+  for (
+    axis_index in seq_len(
+      nrow(axes_i)
+    )
+  ) {
+    axis_row <- axes_i[
+      axis_index
+    ]
+
+    ligand_feature <-
+      axis_row$
+        sender_ligand_feature[1L]
+
+    receptor_features <- split_semicolon(
+      axis_row$
+        receptor_component_features[1L]
+    )
+
+    ligand_sign <- if (
+      axis_row$
+        mean_delta_z_HFpEF[1L] <
+        0
+    ) {
+      1
+    } else if (
+      axis_row$
+        mean_delta_z_HFpEF[1L] >
+        0
+    ) {
+      -1
+    } else {
+      0
+    }
+
+    receiver_sign <- if (
+      axis_row$
+        predicted_receiver_direction[1L] ==
+        "HFpEF_up"
+    ) {
+      1
+    } else if (
+      axis_row$
+        predicted_receiver_direction[1L] ==
+        "HFpEF_down"
+    ) {
+      -1
+    } else {
+      0
+    }
+
+    axis_weight <- (
+      1 /
+        sqrt(
+          max(
+            as.numeric(
+              axis_row$
+                final_axis_rank[1L]
+            ),
+            1
+          )
+        )
+    ) *
+      if (
+        isTRUE(
+          axis_row$
+            strict_cross_stage_support[1L]
+        )
+      ) {
+        STRICT_SUPPORT_WEIGHT
+      } else {
+        1
+      }
+
+    ligand_sample <- stage6_expression[
+      major_cell_type ==
+        "Macrophage_Monocyte" &
+      sample_accession %in%
+        sample_order &
+      feature_key ==
+        gene_key(
+          ligand_feature
+        ),
+      .(
+        ligand_log2_cpm =
+          safe_mean(
+            log2_cpm
+          ),
+        ligand_pct =
+          safe_mean(
+            pct_expressed
+          )
+      ),
+      by = .(
+        sample_accession
+      )
+    ]
+
+    assert_unique_column_names(
+      ligand_sample,
+      paste0(
+        "ligand_sample__",
+        axis_row$axis_id[1L]
+      )
+    )
+
+    assert_unique_rows_by(
+      ligand_sample,
+      "sample_accession",
+      paste0(
+        "ligand_sample__",
+        axis_row$axis_id[1L]
+      )
+    )
+
+    receptor_sample <- stage6_expression[
+      major_cell_type ==
+        axis_row$
+          receiver[1L] &
+      sample_accession %in%
+        sample_order &
+      feature_key %in%
+        gene_key(
+          receptor_features
+        ),
+      .(
+        receptor_components_detected =
+          data.table::uniqueN(
+            feature_key
+          ),
+        receptor_log2_cpm =
+          safe_mean(
+            log2_cpm
+          ),
+        receptor_pct =
+          safe_mean(
+            pct_expressed
+          )
+      ),
+      by = .(
+        sample_accession
+      )
+    ]
+
+    assert_unique_column_names(
+      receptor_sample,
+      paste0(
+        "receptor_sample__",
+        axis_row$axis_id[1L]
+      )
+    )
+
+    assert_unique_rows_by(
+      receptor_sample,
+      "sample_accession",
+      paste0(
+        "receptor_sample__",
+        axis_row$axis_id[1L]
+      )
+    )
+
+    paired <- merge(
+      data.table::data.table(
+        sample_accession =
+          sample_order,
+        sample_order_index =
+          seq_along(
+            sample_order
+          )
+      ),
+      ligand_sample,
+      by = "sample_accession",
+      all.x = TRUE,
+      sort = FALSE
+    )
+
+    assert_unique_column_names(
+      paired,
+      paste0(
+        "paired_after_ligand__",
+        axis_row$axis_id[1L]
+      )
+    )
+
+    assert_unique_rows_by(
+      paired,
+      "sample_accession",
+      paste0(
+        "paired_after_ligand__",
+        axis_row$axis_id[1L]
+      )
+    )
+
+    paired <- merge(
+      paired,
+      receptor_sample,
+      by = "sample_accession",
+      all.x = TRUE,
+      sort = FALSE
+    )
+
+    data.table::setorder(
+      paired,
+      sample_order_index
+    )
+
+    assert_unique_column_names(
+      paired,
+      paste0(
+        "paired_after_receptor__",
+        axis_row$axis_id[1L]
+      )
+    )
+
+    assert_unique_rows_by(
+      paired,
+      "sample_accession",
+      paste0(
+        "paired_after_receptor__",
+        axis_row$axis_id[1L]
+      )
+    )
+
+    paired[
+      ,
+      `:=`(
+        tf_symbol =
+          axis_row$
+            tf_symbol[1L],
+        axis_id =
+          axis_row$
+            axis_id[1L],
+        final_axis_rank =
+          axis_row$
+            final_axis_rank[1L],
+        receiver =
+          axis_row$
+            receiver[1L],
+        ligand =
+          ligand_feature,
+        receptor =
+          axis_row$
+            receptor[1L],
+        ligand_sign =
+          ligand_sign,
+        receiver_sign =
+          receiver_sign,
+        axis_weight =
+          axis_weight,
+        receptor_components_required =
+          length(
+            receptor_features
+          )
+      )
+    ]
+
+    paired[
+      ,
+      axis_raw_score :=
+        0.5 *
+        (
+          ligand_sign *
+            ligand_log2_cpm +
+          receiver_sign *
+            receptor_log2_cpm
+        )
+    ]
+
+    paired[
+      receptor_components_detected <
+        receptor_components_required,
+      axis_raw_score := NA_real_
+    ]
+
+    axis_sample_records[[length(axis_sample_records) + 1L]] <- paired
+  }
+
+  axis_sample_table <- data.table::rbindlist(
+    axis_sample_records,
     use.names = TRUE,
     fill = TRUE
   )
 
-bootstrap_results[
-  ,
-  bootstrap_candidate_rank :=
-    rank(
-      -primary_median_gap_reduction,
-      ties.method = "average"
+  assert_unique_column_names(
+    axis_sample_table,
+    paste0(
+      feature_name,
+      "_axis_sample_table"
+    )
+  )
+
+  assert_unique_rows_by(
+    axis_sample_table,
+    c(
+      "axis_id",
+      "sample_accession"
     ),
-  by = bootstrap_replicate
-]
-
-bootstrap_summary <- bootstrap_results[
-  ,
-  .(
-    bootstrap_replicates = .N,
-    median_primary_gap_reduction =
-      safe_median(
-        primary_median_gap_reduction
-      ),
-    q025_primary_gap_reduction =
-      safe_quantile(
-        primary_median_gap_reduction,
-        0.025
-      ),
-    q975_primary_gap_reduction =
-      safe_quantile(
-        primary_median_gap_reduction,
-        0.975
-      ),
-    positive_recovery_probability =
-      safe_mean(
-        primary_median_gap_reduction >
-          0
-      ),
-    median_primary_positive_fraction =
-      safe_median(
-        primary_positive_fraction
-      ),
-    median_allsize_positive_fraction =
-      safe_median(
-        allsize_positive_fraction
-      ),
-    median_sample_improvement_fraction =
-      safe_median(
-        sample_improvement_fraction
-      ),
-    median_supported_recovery =
-      safe_median(
-        supported_primary_median_gap_reduction
-      ),
-    median_inflammation_recovery =
-      safe_median(
-        inflammation_median_gap_reduction
-      ),
-    median_global_rms_shift =
-      safe_median(
-        global_rms_shift_HFpEF
-      ),
-    median_specificity_score =
-      safe_median(
-        specificity_score
-      ),
-    median_bootstrap_rank =
-      safe_median(
-        bootstrap_candidate_rank
-      ),
-    top1_frequency =
-      safe_mean(
-        bootstrap_candidate_rank <=
-          1
-      ),
-    top3_frequency =
-      safe_mean(
-        bootstrap_candidate_rank <=
-          3
-      )
-  ),
-  by = tf_symbol
-]
-
-if (
-  nrow(bootstrap_results) !=
-    BOOTSTRAP_REPLICATES *
-      length(candidate_tfs)
-) {
-  stop(
-    "Bootstrap output row count is incomplete."
+    paste0(
+      feature_name,
+      "_axis_sample_table"
+    )
   )
-}
 
-if (
-  min(
-    bootstrap_results[
-      ,
-      .N,
-      by = tf_symbol
-    ]$N
-  ) !=
-    BOOTSTRAP_REPLICATES
-) {
-  stop(
-    "At least one candidate does not have all bootstrap replicates."
-  )
-}
-
-write_csv_safe(
-  bootstrap_results,
-  file.path(
-    DIRS$tables,
-    "06_stage5B_candidate_regulon_bootstrap_replicates.csv"
-  ),
-  compress = TRUE
-)
-
-write_csv_safe(
-  bootstrap_summary,
-  file.path(
-    DIRS$tables,
-    "07_stage5B_candidate_regulon_bootstrap_summary.csv"
-  )
-)
-
-############################################################
-## 8. Build TF covariates for unbiased null matching
-############################################################
-
-regulon_covariates <-
-  network_table[
-    ,
+  aggregated <- axis_sample_table[
+    is.finite(axis_raw_score) &
+      is.finite(axis_weight) &
+      axis_weight > 0,
     .(
-      regulon_size =
-        data.table::uniqueN(
-          target_feature
-        )
-    ),
-    by = source_symbol
-  ]
-
-activity_effect_records <- lapply(
-  rownames(stage4_activity),
-  function(source_i) {
-    values <- as.numeric(
-      stage4_activity[
-        source_i,
-        sample_order
-      ]
-    )
-
-    data.table::data.table(
-      source_symbol =
-        source_i,
-      activity_effect =
-        mean(
-          values[
-            sample_meta$condition ==
-              "HFpEF"
-          ],
-          na.rm = TRUE
-        ) -
-        mean(
-          values[
-            sample_meta$condition ==
-              "Control"
-          ],
-          na.rm = TRUE
-        )
-    )
-  }
-)
-
-activity_covariates <-
-  data.table::rbindlist(
-    activity_effect_records
-  )
-
-source_feature_map <-
-  map_symbols_to_features(
-    regulon_covariates$
-      source_symbol,
-    feature_map
-  )
-
-source_feature_map <- unique(
-  source_feature_map[
-    ,
-    .(
-      source_symbol =
-        symbol,
-      source_feature =
-        feature
-    )
-  ],
-  by = "source_symbol"
-)
-
-tf_covariates <- merge(
-  regulon_covariates,
-  activity_covariates,
-  by = "source_symbol",
-  all = FALSE
-)
-
-tf_covariates <- merge(
-  tf_covariates,
-  source_feature_map,
-  by = "source_symbol",
-  all.x = TRUE
-)
-
-tf_covariates[
-  ,
-  expression_effect := NA_real_
-]
-
-detected_sources <- tf_covariates[
-  !is.na(source_feature) &
-    source_feature %in%
-      rownames(sample_logcpm)
-]
-
-if (
-  nrow(detected_sources) > 0L
-) {
-  expression_matrix <- sample_logcpm[
-    detected_sources$
-      source_feature,
-    sample_order,
-    drop = FALSE
-  ]
-
-  expression_effects <- apply(
-    expression_matrix,
-    1L,
-    function(values) {
-      mean(
-        values[
-          sample_meta$condition ==
-            "HFpEF"
-        ],
-        na.rm = TRUE
-      ) -
-        mean(
-          values[
-            sample_meta$condition ==
-              "Control"
-        ],
-        na.rm = TRUE
-      )
-    }
-  )
-
-  tf_covariates[
-    match(
-      detected_sources$
-        source_symbol,
-      source_symbol
-    ),
-    expression_effect :=
-      as.numeric(
-        expression_effects
-      )
-  ]
-}
-
-tf_covariates[
-  ,
-  source_key :=
-    gene_key(source_symbol)
-]
-
-tf_covariates[
-  ,
-  log_regulon_size :=
-    log1p(regulon_size)
-]
-
-write_csv_safe(
-  tf_covariates,
-  file.path(
-    DIRS$tables,
-    "08_stage5B_all_TF_matching_covariates.csv"
-  )
-)
-
-############################################################
-## 9. Create matched null pools without program-overlap filter
-############################################################
-
-candidate_keys <- gene_key(
-  candidate_tfs
-)
-
-eligible_null_tfs <- tf_covariates[
-  !source_key %in%
-    candidate_keys &
-    regulon_size >=
-      MIN_TARGETS_PER_REGULON &
-    is.finite(activity_effect)
-]
-
-if (
-  nrow(eligible_null_tfs) <
-    NULL_MIN_POOL_SIZE
-) {
-  stop(
-    "Insufficient eligible TFs for null matching."
-  )
-}
-
-scale_log_size <- stats::mad(
-  tf_covariates$
-    log_regulon_size,
-  na.rm = TRUE
-)
-
-scale_activity <- stats::mad(
-  abs(
-    tf_covariates$
-      activity_effect
-  ),
-  na.rm = TRUE
-)
-
-scale_expression <- stats::mad(
-  abs(
-    tf_covariates$
-      expression_effect
-  ),
-  na.rm = TRUE
-)
-
-if (
-  !is.finite(scale_log_size) ||
-  scale_log_size <= 0
-) {
-  scale_log_size <- 1
-}
-
-if (
-  !is.finite(scale_activity) ||
-  scale_activity <= 0
-) {
-  scale_activity <- 1
-}
-
-if (
-  !is.finite(scale_expression) ||
-  scale_expression <= 0
-) {
-  scale_expression <- 1
-}
-
-null_pool_records <- list()
-required_null_tfs <- character()
-
-for (
-  candidate_i in candidate_tfs
-) {
-  candidate_covariate <- tf_covariates[
-    source_symbol ==
-      candidate_i
-  ]
-
-  if (
-    nrow(candidate_covariate) != 1L
-  ) {
-    stop(
-      "Candidate covariates are not uniquely available for ",
-      candidate_i,
-      "."
-    )
-  }
-
-  pool_i <- data.table::copy(
-    eligible_null_tfs
-  )
-
-  pool_i[
-    ,
-    size_distance :=
-      abs(
-        log_regulon_size -
-          candidate_covariate$
-            log_regulon_size[1L]
-      ) /
-      scale_log_size
-  ]
-
-  pool_i[
-    ,
-    activity_distance :=
-      abs(
-        abs(activity_effect) -
-          abs(
-            candidate_covariate$
-              activity_effect[1L]
-          )
-      ) /
-      scale_activity
-  ]
-
-  candidate_expression_available <-
-    is.finite(
-      candidate_covariate$
-        expression_effect[1L]
-    )
-
-  if (
-    candidate_expression_available
-  ) {
-    pool_i[
-      ,
-      expression_distance := ifelse(
-        is.finite(expression_effect),
-        abs(
-          abs(expression_effect) -
-            abs(
-              candidate_covariate$
-                expression_effect[1L]
-            )
+      communication_score =
+        sum(
+          axis_weight *
+            axis_raw_score
         ) /
-          scale_expression,
-        2
-      )
-    ]
-  } else {
-    pool_i[
-      ,
-      expression_distance := 0
-    ]
-  }
-
-  pool_i[
-    ,
-    matching_distance :=
-      size_distance +
-      activity_distance +
-      expression_distance
+        sum(axis_weight),
+      axes_contributing =
+        data.table::uniqueN(
+          axis_id
+        )
+    ),
+    by = sample_accession
   ]
+
+  score_table <- merge(
+    data.table::data.table(
+      sample_accession =
+        sample_order,
+      sample_order_index =
+        seq_along(
+          sample_order
+        )
+    ),
+    aggregated,
+    by = "sample_accession",
+    all.x = TRUE,
+    sort = FALSE
+  )
 
   data.table::setorder(
-    pool_i,
-    matching_distance,
-    source_symbol
+    score_table,
+    sample_order_index
   )
 
-  pool_i <- head(
-    pool_i,
-    min(
-      NULL_NEAREST_POOL_SIZE,
-      nrow(pool_i)
+  assert_unique_column_names(
+    score_table,
+    paste0(
+      feature_name,
+      "_score_table"
+    )
+  )
+
+  assert_unique_rows_by(
+    score_table,
+    "sample_accession",
+    paste0(
+      feature_name,
+      "_score_table"
     )
   )
 
   if (
-    nrow(pool_i) <
-      NULL_MIN_POOL_SIZE
-  ) {
-    stop(
-      "Matched null pool is too small for ",
-      candidate_i,
-      "."
-    )
-  }
-
-  positive_distances <-
-    pool_i$matching_distance[
-      is.finite(
-        pool_i$matching_distance
-      ) &
-        pool_i$matching_distance > 0
-    ]
-
-  distance_scale <- safe_median(
-    positive_distances,
-    1
-  )
-
-  if (
-    !is.finite(distance_scale) ||
-    distance_scale <= 0
-  ) {
-    distance_scale <- 1
-  }
-
-  pool_i[
-    ,
-    sampling_weight :=
-      exp(
-        -matching_distance /
-          distance_scale
+    !identical(
+      as.character(
+        score_table$sample_accession
+      ),
+      as.character(
+        sample_order
       )
-  ]
-
-  pool_i[
-    ,
-    sampling_probability :=
-      sampling_weight /
-      sum(sampling_weight)
-  ]
-
-  pool_i[
-    ,
-    `:=`(
-      candidate_tf =
-        candidate_i,
-      candidate_regulon_size =
-        candidate_covariate$
-          regulon_size[1L],
-      candidate_activity_effect =
-        candidate_covariate$
-          activity_effect[1L],
-      candidate_expression_effect =
-        candidate_covariate$
-          expression_effect[1L],
-      expression_dimension_used =
-        candidate_expression_available,
-      program_overlap_filter_used =
-        FALSE
     )
-  ]
-
-  null_pool_records[[length(null_pool_records) + 1L]] <- pool_i
-
-  required_null_tfs <- unique(
-    c(
-      required_null_tfs,
-      pool_i$source_symbol
-    )
-  )
-}
-
-null_pool <- data.table::rbindlist(
-  null_pool_records,
-  use.names = TRUE,
-  fill = TRUE
-)
-
-write_csv_safe(
-  null_pool,
-  file.path(
-    DIRS$tables,
-    "09_stage5B_candidate_matched_null_TF_pools.csv"
-  ),
-  compress = TRUE
-)
-
-############################################################
-## 10. Precompute full-regulon effects for null TFs
-############################################################
-
-log_msg(
-  "Precomputing effects for ",
-  length(required_null_tfs),
-  " unique matched null TFs."
-)
-
-null_effect_records <- list()
-
-for (
-  null_tf_i in required_null_tfs
-) {
-  if (
-    !null_tf_i %in%
-      rownames(stage4_activity)
   ) {
     stop(
-      "Matched null TF lacks Stage 4 activity: ",
-      null_tf_i
+      feature_name,
+      " score table is not aligned to the locked sample order."
     )
   }
 
-  null_result <- evaluate_tf(
-    tf_requested =
-      null_tf_i,
-    network_table =
-      network_table,
-    activity_matrix =
-      stage4_activity,
-    sample_z =
-      sample_z,
-    sample_meta =
-      sample_meta,
-    program_definitions =
-      program_definitions,
-    program_summary =
-      program_summary,
-    observed_program_scores =
-      observed_program_scores
-  )
-
-  summary_i <- null_result$summary
-
-  null_effect_records[[length(null_effect_records) + 1L]] <- data.table::data.table(
-    null_tf =
-      null_tf_i,
-    primary_median_gap_reduction =
-      summary_i$
-        primary_median_gap_reduction,
-    primary_positive_fraction =
-      summary_i$
-        primary_positive_fraction,
-    allsize_positive_fraction =
-      summary_i$
-        allsize_positive_fraction,
-    sample_improvement_fraction =
-      summary_i$
-        sample_improvement_fraction,
-    supported_primary_median_gap_reduction =
-      summary_i$
-        supported_primary_median_gap_reduction,
-    inflammation_median_gap_reduction =
-      summary_i$
-        inflammation_median_gap_reduction,
-    global_rms_shift_HFpEF =
-      summary_i$
-        global_rms_shift_HFpEF,
-    specificity_score =
-      summary_i$
-        specificity_score
+  list(
+    score =
+      score_table$
+        communication_score,
+    axes_contributing =
+      score_table$
+        axes_contributing,
+    axis_sample_table =
+      axis_sample_table,
+    axes =
+      axes_i
   )
 }
 
-null_effects <- data.table::rbindlist(
-  null_effect_records,
+nfkb_communication <- build_axis_sample_scores(
+  axes_table =
+    stage6_axes,
+  tf_filter = c(
+    "Nfkb1",
+    "Rela"
+  ),
+  maximum_axes =
+    MAX_NFKB_AXES,
+  feature_name =
+    "COMM_NFkB_axis_burden"
+)
+
+bhlhe40_communication <- build_axis_sample_scores(
+  axes_table =
+    stage6_axes,
+  tf_filter =
+    "Bhlhe40",
+  maximum_axes =
+    MAX_BHLHE40_AXES,
+  feature_name =
+    "COMM_Bhlhe40_axis_burden"
+)
+
+sample_features[
+  ,
+  COMM_NFkB_axis_burden :=
+    nfkb_communication$score
+]
+
+sample_features[
+  ,
+  COMM_Bhlhe40_axis_burden :=
+    bhlhe40_communication$score
+]
+
+feature_definition_records[[length(feature_definition_records) + 1L]] <- data.table::data.table(
+  feature =
+    "COMM_NFkB_axis_burden",
+  biological_layer =
+    "Stage6_NFKB1_RELA_communication",
+  definition =
+    "Inverse-rank-weighted mean of oriented macrophage ligand and receiver receptor-component log2-CPM across the top Nfkb1/Rela communication axes.",
+  source_items = paste(
+    nfkb_communication$
+      axes$axis_id,
+    collapse = ";"
+  ),
+  prespecified_primary = TRUE,
+  prespecified_extended = TRUE
+)
+
+feature_definition_records[[length(feature_definition_records) + 1L]] <- data.table::data.table(
+  feature =
+    "COMM_Bhlhe40_axis_burden",
+  biological_layer =
+    "Stage6_BHLHE40_communication",
+  definition =
+    "Inverse-rank-weighted mean of oriented macrophage ligand and receiver receptor-component log2-CPM across Bhlhe40 communication axes.",
+  source_items = paste(
+    bhlhe40_communication$
+      axes$axis_id,
+    collapse = ";"
+  ),
+  prespecified_primary = FALSE,
+  prespecified_extended = TRUE
+)
+
+feature_definitions <- data.table::rbindlist(
+  feature_definition_records,
   use.names = TRUE,
   fill = TRUE
+)
+
+missing_primary_features <- setdiff(
+  PRIMARY_PANEL,
+  names(sample_features)
+)
+
+missing_extended_features <- setdiff(
+  EXTENDED_PANEL,
+  names(sample_features)
 )
 
 if (
-  data.table::uniqueN(
-    null_effects$null_tf
-  ) !=
-    length(required_null_tfs)
+  length(missing_primary_features) > 0L ||
+  length(missing_extended_features) > 0L
 ) {
   stop(
-    "Not all matched null TF effects were computed."
+    "Stage 7 feature construction is incomplete. Missing primary: ",
+    paste(
+      missing_primary_features,
+      collapse = ";"
+    ),
+    " | Missing extended: ",
+    paste(
+      missing_extended_features,
+      collapse = ";"
+    )
   )
 }
 
-write_csv_safe(
-  null_effects,
-  file.path(
-    DIRS$tables,
-    "10_stage5B_precomputed_null_TF_effects.csv"
-  )
+assert_unique_column_names(
+  sample_features,
+  "sample_features_complete"
 )
 
-############################################################
-## 11. Draw empirical null distributions
-############################################################
+assert_unique_rows_by(
+  sample_features,
+  "sample_accession",
+  "sample_features_complete"
+)
 
-null_draw_records <- list()
-null_summary_records <- list()
-
-for (
-  candidate_i in candidate_tfs
+if (
+  !identical(
+    as.character(
+      sample_features$sample_accession
+    ),
+    as.character(
+      sample_order
+    )
+  )
 ) {
-  candidate_pool <- null_pool[
-    candidate_tf ==
-      candidate_i
-  ]
+  stop(
+    "Completed Stage 7 sample feature matrix is not aligned to the locked sample order."
+  )
+}
 
-  candidate_pool <- merge(
-    candidate_pool,
-    null_effects,
-    by.x = "source_symbol",
-    by.y = "null_tf",
-    all.x = TRUE
+for (feature_i in EXTENDED_PANEL) {
+  values_i <- as.numeric(
+    sample_features[[feature_i]]
   )
 
-  candidate_pool <- candidate_pool[
-    is.finite(
-      primary_median_gap_reduction
-    ) &
-      is.finite(
-        sampling_probability
-      ) &
-      sampling_probability > 0
-  ]
-
-  if (
-    nrow(candidate_pool) <
-      NULL_MIN_POOL_SIZE
-  ) {
-    stop(
-      "Evaluated null pool is too small for ",
-      candidate_i,
-      "."
-    )
-  }
-
-  candidate_pool[
-    ,
-    sampling_probability :=
-      sampling_probability /
-      sum(sampling_probability)
-  ]
-
-  set.seed(
-    20260714 +
-      match(
-        candidate_i,
-        candidate_tfs
-      ) *
-      10000L
+  finite_n <- sum(
+    is.finite(values_i)
   )
 
-  sampled_rows <- sample.int(
-    nrow(candidate_pool),
-    size =
-      NULL_DRAWS_PER_CANDIDATE,
-    replace = TRUE,
-    prob =
-      candidate_pool$
-        sampling_probability
-  )
-
-  draws_i <- candidate_pool[
-    sampled_rows
-  ]
-
-  draws_i[
-    ,
-    `:=`(
-      candidate_tf =
-        candidate_i,
-      draw_id =
-        seq_len(.N)
-    )
-  ]
-
-  candidate_effect <- full_candidate_summary[
-    tf_symbol ==
-      candidate_i,
-    primary_median_gap_reduction
-  ]
-
-  if (
-    length(candidate_effect) != 1L
-  ) {
-    stop(
-      "Candidate full-regulon effect is not uniquely available for ",
-      candidate_i,
-      "."
-    )
-  }
-
-  candidate_percentile <- mean(
-    draws_i$
-      primary_median_gap_reduction <=
-      candidate_effect,
+  variance_i <- stats::var(
+    values_i,
     na.rm = TRUE
   )
 
-  empirical_p <- (
-    1 +
-      sum(
-        draws_i$
-          primary_median_gap_reduction >=
-          candidate_effect,
-        na.rm = TRUE
-      )
-  ) /
-    (
-      1 +
-        nrow(draws_i)
+  if (
+    finite_n < 4L ||
+    !is.finite(variance_i) ||
+    variance_i <= 0
+  ) {
+    stop(
+      "Stage 7 feature is not model-eligible: ",
+      feature_i,
+      " | finite samples=",
+      finite_n,
+      " | variance=",
+      variance_i
     )
-
-  null_summary_records[[length(null_summary_records) + 1L]] <- data.table::data.table(
-    tf_symbol =
-      candidate_i,
-    candidate_effect =
-      candidate_effect,
-    null_pool_size =
-      nrow(candidate_pool),
-    null_draws =
-      nrow(draws_i),
-    unique_null_TFs_drawn =
-      data.table::uniqueN(
-        draws_i$source_symbol
-      ),
-    null_median =
-      safe_median(
-        draws_i$
-          primary_median_gap_reduction
-      ),
-    null_q025 =
-      safe_quantile(
-        draws_i$
-          primary_median_gap_reduction,
-        0.025
-      ),
-    null_q975 =
-      safe_quantile(
-        draws_i$
-          primary_median_gap_reduction,
-        0.975
-      ),
-    candidate_percentile =
-      candidate_percentile,
-    empirical_one_sided_p =
-      empirical_p,
-    program_overlap_filter_used =
-      FALSE
-  )
-
-  null_draw_records[[length(null_draw_records) + 1L]] <- draws_i[
-    ,
-    .(
-      candidate_tf,
-      draw_id,
-      sampled_null_TF =
-        source_symbol,
-      matching_distance,
-      sampling_probability,
-      primary_median_gap_reduction,
-      primary_positive_fraction,
-      allsize_positive_fraction,
-      sample_improvement_fraction,
-      supported_primary_median_gap_reduction,
-      inflammation_median_gap_reduction,
-      global_rms_shift_HFpEF,
-      specificity_score
-    )
-  ]
-}
-
-null_draws <- data.table::rbindlist(
-  null_draw_records,
-  use.names = TRUE,
-  fill = TRUE
-)
-
-null_summary <- data.table::rbindlist(
-  null_summary_records,
-  use.names = TRUE,
-  fill = TRUE
-)
-
-if (
-  nrow(null_draws) !=
-    NULL_DRAWS_PER_CANDIDATE *
-      length(candidate_tfs)
-) {
-  stop(
-    "Random matched-TF null draw count is incomplete."
-  )
-}
-
-if (
-  nrow(null_summary) !=
-    length(candidate_tfs)
-) {
-  stop(
-    "Random null summary does not contain all candidates."
-  )
+  }
 }
 
 write_csv_safe(
-  null_draws,
+  feature_definitions,
   file.path(
     DIRS$tables,
-    "11_stage5B_random_matched_TF_null_draws.csv"
+    "02_stage7_feature_definitions.csv"
+  )
+)
+
+write_csv_safe(
+  sample_features,
+  file.path(
+    DIRS$tables,
+    "03_stage7_sample_level_feature_matrix.csv"
+  )
+)
+
+write_csv_safe(
+  nfkb_communication$
+    axis_sample_table,
+  file.path(
+    DIRS$tables,
+    "04_stage7_NFkB_axis_sample_components.csv"
   ),
   compress = TRUE
 )
 
 write_csv_safe(
-  null_summary,
+  bhlhe40_communication$
+    axis_sample_table,
   file.path(
     DIRS$tables,
-    "12_stage5B_random_matched_TF_null_summary.csv"
-  )
+    "05_stage7_Bhlhe40_axis_sample_components.csv"
+  ),
+  compress = TRUE
 )
 
 ############################################################
-## 12. Final transparent candidate robustness rank
+## 7. Exhaustive leave-pair-out ridge validation
 ############################################################
 
-final_robustness <- merge(
-  full_candidate_summary,
-  bootstrap_summary,
-  by = "tf_symbol",
-  all = TRUE,
-  suffixes = c(
-    "_full",
-    "_bootstrap"
-  )
-)
+run_leave_pair_out <- function(
+  feature_table,
+  feature_columns,
+  labels,
+  lambda,
+  panel_name,
+  store_details = TRUE
+) {
+  labels <- as.integer(labels)
 
-final_robustness <- merge(
-  final_robustness,
-  null_summary[
+  if (
+    length(labels) !=
+      nrow(feature_table) ||
+    sum(labels == 0L) != 3L ||
+    sum(labels == 1L) != 3L
+  ) {
+    stop(
+      "Leave-pair-out requires exactly three samples per class."
+    )
+  }
+
+  control_indices <- which(
+    labels == 0L
+  )
+
+  hfpef_indices <- which(
+    labels == 1L
+  )
+
+  pair_grid <- data.table::CJ(
+    control_index =
+      control_indices,
+    hfpef_index =
+      hfpef_indices,
+    unique = TRUE
+  )
+
+  prediction_records <- list()
+  coefficient_records <- list()
+  contribution_records <- list()
+  fold_records <- list()
+
+  feature_matrix <- as.matrix(
+    feature_table[
+      ,
+      feature_columns,
+      with = FALSE
+    ]
+  )
+
+  rownames(feature_matrix) <-
+    feature_table$
+      sample_accession
+
+  for (
+    fold_index in seq_len(
+      nrow(pair_grid)
+    )
+  ) {
+    test_indices <- c(
+      pair_grid$
+        control_index[fold_index],
+      pair_grid$
+        hfpef_index[fold_index]
+    )
+
+    train_indices <- setdiff(
+      seq_len(
+        nrow(feature_table)
+      ),
+      test_indices
+    )
+
+    scaled <- safe_scale_training(
+      train_matrix =
+        feature_matrix[
+          train_indices,
+          ,
+          drop = FALSE
+        ],
+      test_matrix =
+        feature_matrix[
+          test_indices,
+          ,
+          drop = FALSE
+        ]
+    )
+
+    fit <- fit_ridge_logistic(
+      x =
+        scaled$train_z,
+      y =
+        labels[
+          train_indices
+        ],
+      lambda =
+        lambda
+    )
+
+    names(
+      fit$coefficients
+    ) <- feature_columns
+
+    test_linear_predictor <-
+      fit$intercept +
+      as.numeric(
+        scaled$test_z %*%
+          fit$coefficients
+      )
+
+    test_probability <- expit(
+      test_linear_predictor
+    )
+
+    contribution_matrix <- sweep(
+      scaled$test_z,
+      2L,
+      fit$coefficients,
+      "*"
+    )
+
+    fold_id <- paste0(
+      panel_name,
+      "__lambda_",
+      format(
+        lambda,
+        scientific = FALSE,
+        trim = TRUE
+      ),
+      "__fold_",
+      fold_index
+    )
+
+    prediction_i <- data.table::data.table(
+      fold_id =
+        fold_id,
+      panel =
+        panel_name,
+      lambda =
+        lambda,
+      sample_accession =
+        feature_table$
+          sample_accession[
+            test_indices
+          ],
+      true_label =
+        labels[
+          test_indices
+        ],
+      true_condition = ifelse(
+        labels[
+          test_indices
+        ] == 1L,
+        "HFpEF",
+        "Control"
+      ),
+      predicted_probability =
+        test_probability,
+      linear_predictor =
+        test_linear_predictor,
+      heldout_control_sample =
+        feature_table$
+          sample_accession[
+            pair_grid$
+              control_index[
+                fold_index
+              ]
+          ],
+      heldout_hfpef_sample =
+        feature_table$
+          sample_accession[
+            pair_grid$
+              hfpef_index[
+                fold_index
+              ]
+          ]
+    )
+
+    prediction_records[[length(prediction_records) + 1L]] <- prediction_i
+
+    pair_control_probability <-
+      prediction_i[
+        true_label ==
+          0L,
+        predicted_probability
+      ]
+
+    pair_hfpef_probability <-
+      prediction_i[
+        true_label ==
+          1L,
+        predicted_probability
+      ]
+
+    fold_records[[length(fold_records) + 1L]] <- data.table::data.table(
+      fold_id =
+        fold_id,
+      panel =
+        panel_name,
+      lambda =
+        lambda,
+      heldout_control_sample =
+        prediction_i$
+          heldout_control_sample[1L],
+      heldout_hfpef_sample =
+        prediction_i$
+          heldout_hfpef_sample[1L],
+      control_probability =
+        pair_control_probability,
+      hfpef_probability =
+        pair_hfpef_probability,
+      pair_margin =
+        pair_hfpef_probability -
+        pair_control_probability,
+      pair_correct = (
+        pair_hfpef_probability >
+          pair_control_probability
+      ),
+      model_converged =
+        fit$converged,
+      convergence_code =
+        fit$convergence_code,
+      optimization_method =
+        fit$optimization_method,
+      objective =
+        fit$objective
+    )
+
+    if (store_details) {
+      coefficient_records[[length(coefficient_records) + 1L]] <- data.table::data.table(
+        fold_id =
+          fold_id,
+        panel =
+          panel_name,
+        lambda =
+          lambda,
+        feature =
+          feature_columns,
+        coefficient =
+          as.numeric(
+            fit$coefficients
+          ),
+        intercept =
+          fit$intercept,
+        model_converged =
+          fit$converged
+      )
+
+      for (
+        test_row_index in seq_len(
+          nrow(
+            contribution_matrix
+          )
+        )
+      ) {
+        contribution_records[[length(contribution_records) + 1L]] <- data.table::data.table(
+          fold_id =
+            fold_id,
+          panel =
+            panel_name,
+          lambda =
+            lambda,
+          sample_accession =
+            feature_table$
+              sample_accession[
+                test_indices[
+                  test_row_index
+                ]
+              ],
+          true_label =
+            labels[
+              test_indices[
+                test_row_index
+              ]
+            ],
+          feature =
+            feature_columns,
+          standardized_value =
+            as.numeric(
+              scaled$test_z[
+                test_row_index,
+                ,
+                drop = TRUE
+              ]
+            ),
+          coefficient =
+            as.numeric(
+              fit$coefficients
+            ),
+          logit_contribution =
+            as.numeric(
+              contribution_matrix[
+                test_row_index,
+                ,
+                drop = TRUE
+              ]
+            ),
+          intercept =
+            fit$intercept
+        )
+      }
+    }
+  }
+
+  predictions <- data.table::rbindlist(
+    prediction_records,
+    use.names = TRUE,
+    fill = TRUE
+  )
+
+  folds <- data.table::rbindlist(
+    fold_records,
+    use.names = TRUE,
+    fill = TRUE
+  )
+
+  sample_predictions <- predictions[
     ,
     .(
-      tf_symbol,
-      null_median,
-      null_q025,
-      null_q975,
-      candidate_percentile,
-      empirical_one_sided_p
-    )
-  ],
-  by = "tf_symbol",
+      mean_predicted_probability =
+        mean(
+          predicted_probability
+        ),
+      median_predicted_probability =
+        stats::median(
+          predicted_probability
+        ),
+      mean_linear_predictor =
+        mean(
+          linear_predictor
+        ),
+      heldout_appearances = .N,
+      true_label =
+        unique(
+          true_label
+        )[1L],
+      true_condition =
+        unique(
+          true_condition
+        )[1L]
+    ),
+    by = sample_accession
+  ]
+
+  pairwise_auc <- mean(
+    folds$pair_correct,
+    na.rm = TRUE
+  )
+
+  sample_auc <- safe_auc(
+    sample_predictions$
+      true_label,
+    sample_predictions$
+      mean_predicted_probability
+  )
+
+  list(
+    predictions =
+      predictions,
+    folds =
+      folds,
+    sample_predictions =
+      sample_predictions,
+    coefficients = if (
+      store_details
+    ) {
+      data.table::rbindlist(
+        coefficient_records,
+        use.names = TRUE,
+        fill = TRUE
+      )
+    } else {
+      data.table::data.table()
+    },
+    contributions = if (
+      store_details
+    ) {
+      data.table::rbindlist(
+        contribution_records,
+        use.names = TRUE,
+        fill = TRUE
+      )
+    } else {
+      data.table::data.table()
+    },
+    pairwise_auc =
+      pairwise_auc,
+    sample_auc =
+      sample_auc,
+    folds_converged =
+      sum(
+        folds$model_converged ==
+          TRUE
+      ),
+    total_folds =
+      nrow(folds)
+  )
+}
+
+primary_result <- run_leave_pair_out(
+  feature_table =
+    sample_features,
+  feature_columns =
+    PRIMARY_PANEL,
+  labels =
+    sample_features$y,
+  lambda =
+    PRIMARY_RIDGE_LAMBDA,
+  panel_name =
+    "Primary_5_feature_panel",
+  store_details = TRUE
+)
+
+write_csv_safe(
+  primary_result$predictions,
+  file.path(
+    DIRS$tables,
+    "06_stage7_primary_LOPO_heldout_predictions.csv"
+  )
+)
+
+write_csv_safe(
+  primary_result$folds,
+  file.path(
+    DIRS$tables,
+    "07_stage7_primary_LOPO_fold_performance.csv"
+  )
+)
+
+write_csv_safe(
+  primary_result$sample_predictions,
+  file.path(
+    DIRS$tables,
+    "08_stage7_primary_LOPO_sample_predictions.csv"
+  )
+)
+
+write_csv_safe(
+  primary_result$coefficients,
+  file.path(
+    DIRS$tables,
+    "09_stage7_primary_LOPO_coefficients.csv"
+  )
+)
+
+write_csv_safe(
+  primary_result$contributions,
+  file.path(
+    DIRS$tables,
+    "10_stage7_primary_exact_logit_contributions.csv"
+  ),
+  compress = TRUE
+)
+
+############################################################
+## 8. Feature attribution and fold stability
+############################################################
+
+feature_importance <- primary_result$
+  contributions[
+    ,
+    .(
+      mean_logit_contribution =
+        mean(
+          logit_contribution
+        ),
+      mean_absolute_logit_contribution =
+        mean(
+          abs(
+            logit_contribution
+          )
+        ),
+      median_absolute_logit_contribution =
+        stats::median(
+          abs(
+            logit_contribution
+          )
+        ),
+      positive_contribution_fraction =
+        mean(
+          logit_contribution > 0
+        ),
+      negative_contribution_fraction =
+        mean(
+          logit_contribution < 0
+        ),
+      heldout_attributions = .N
+    ),
+    by = feature
+  ]
+
+coefficient_stability <- primary_result$
+  coefficients[
+    ,
+    .(
+      mean_coefficient =
+        mean(
+          coefficient
+        ),
+      median_coefficient =
+        stats::median(
+          coefficient
+        ),
+      mean_absolute_coefficient =
+        mean(
+          abs(
+            coefficient
+          )
+        ),
+      positive_fold_fraction =
+        mean(
+          coefficient > 0
+        ),
+      negative_fold_fraction =
+        mean(
+          coefficient < 0
+        ),
+      zero_fold_fraction =
+        mean(
+          coefficient == 0
+        ),
+      coefficient_folds = .N
+    ),
+    by = feature
+  ]
+
+feature_importance <- merge(
+  feature_importance,
+  coefficient_stability,
+  by = "feature",
   all = TRUE
 )
 
-final_robustness[
-  ,
-  rank_full_recovery :=
-    rank_metric(
-      primary_median_gap_reduction,
-      higher_is_better = TRUE
+feature_importance <- merge(
+  feature_importance,
+  feature_definitions[
+    ,
+    .(
+      feature,
+      biological_layer,
+      definition,
+      source_items
     )
-]
-
-final_robustness[
-  ,
-  rank_bootstrap_recovery :=
-    rank_metric(
-      median_primary_gap_reduction,
-      higher_is_better = TRUE
-    )
-]
-
-final_robustness[
-  ,
-  rank_bootstrap_positive :=
-    rank_metric(
-      positive_recovery_probability,
-      higher_is_better = TRUE
-    )
-]
-
-final_robustness[
-  ,
-  rank_bootstrap_top3 :=
-    rank_metric(
-      top3_frequency,
-      higher_is_better = TRUE
-    )
-]
-
-final_robustness[
-  ,
-  rank_null_percentile :=
-    rank_metric(
-      candidate_percentile,
-      higher_is_better = TRUE
-    )
-]
-
-final_robustness[
-  ,
-  rank_empirical_p :=
-    rank_metric(
-      empirical_one_sided_p,
-      higher_is_better = FALSE
-    )
-]
-
-final_robustness[
-  ,
-  rank_sample_stability :=
-    rank_metric(
-      sample_improvement_fraction,
-      higher_is_better = TRUE
-    )
-]
-
-final_robustness[
-  ,
-  rank_inflammation :=
-    rank_metric(
-      inflammation_median_gap_reduction,
-      higher_is_better = TRUE
-    )
-]
-
-final_robustness[
-  ,
-  rank_specificity :=
-    rank_metric(
-      specificity_score,
-      higher_is_better = TRUE
-    )
-]
-
-rank_columns <- c(
-  "rank_full_recovery",
-  "rank_bootstrap_recovery",
-  "rank_bootstrap_positive",
-  "rank_bootstrap_top3",
-  "rank_null_percentile",
-  "rank_empirical_p",
-  "rank_sample_stability",
-  "rank_inflammation",
-  "rank_specificity"
+  ],
+  by = "feature",
+  all.x = TRUE
 )
-
-final_robustness[
-  ,
-  mean_evidence_rank :=
-    rowMeans(
-      .SD,
-      na.rm = TRUE
-    ),
-  .SDcols =
-    rank_columns
-]
-
-final_robustness[
-  ,
-  median_evidence_rank :=
-    apply(
-      .SD,
-      1L,
-      stats::median,
-      na.rm = TRUE
-    ),
-  .SDcols =
-    rank_columns
-]
-
-final_robustness[
-  ,
-  final_robustness_score :=
-    0.5 *
-      mean_evidence_rank +
-    0.5 *
-      median_evidence_rank
-]
 
 data.table::setorder(
-  final_robustness,
-  final_robustness_score,
-  rank_null_percentile,
-  rank_bootstrap_recovery
+  feature_importance,
+  -mean_absolute_logit_contribution,
+  -mean_absolute_coefficient,
+  feature
 )
 
-final_robustness[
+feature_importance[
   ,
-  final_robustness_rank :=
+  importance_rank :=
     seq_len(.N)
 ]
 
-final_robustness[
-  ,
-  Nfkb1_forced := FALSE
-]
-
 write_csv_safe(
-  final_robustness,
+  feature_importance,
   file.path(
     DIRS$tables,
-    "13_stage5B_final_candidate_robustness_rank.csv"
+    "11_stage7_feature_attribution_and_stability.csv"
   )
 )
 
 ############################################################
-## 13. Save checkpoint before figures
+## 9. Exhaustive balanced-label permutation null
 ############################################################
+
+sample_indices <- seq_len(
+  nrow(
+    sample_features
+  )
+)
+
+hfpef_assignments <- utils::combn(
+  sample_indices,
+  3L,
+  simplify = FALSE
+)
+
+permutation_records <- list()
+
+observed_hfpef_indices <- which(
+  sample_features$y ==
+    1L
+)
+
+for (
+  permutation_index in seq_along(
+    hfpef_assignments
+  )
+) {
+  permuted_labels <- rep(
+    0L,
+    nrow(
+      sample_features
+    )
+  )
+
+  permuted_labels[
+    hfpef_assignments[[permutation_index]]
+  ] <- 1L
+
+  permutation_result <- run_leave_pair_out(
+    feature_table =
+      sample_features,
+    feature_columns =
+      PRIMARY_PANEL,
+    labels =
+      permuted_labels,
+    lambda =
+      PRIMARY_RIDGE_LAMBDA,
+    panel_name =
+      "Primary_5_feature_panel",
+    store_details = FALSE
+  )
+
+  is_observed <- identical(
+    sort(
+      hfpef_assignments[[permutation_index]]
+    ),
+    sort(
+      observed_hfpef_indices
+    )
+  )
+
+  permutation_records[[length(permutation_records) + 1L]] <- data.table::data.table(
+    permutation_id =
+      permutation_index,
+    hfpef_samples = paste(
+      sample_features$
+        sample_accession[
+          hfpef_assignments[[permutation_index]]
+        ],
+      collapse = ";"
+    ),
+    is_observed_labeling =
+      is_observed,
+    pairwise_auc =
+      permutation_result$
+        pairwise_auc,
+    sample_auc =
+      permutation_result$
+        sample_auc,
+    converged_folds =
+      permutation_result$
+        folds_converged,
+    total_folds =
+      permutation_result$
+        total_folds
+  )
+}
+
+permutation_null <- data.table::rbindlist(
+  permutation_records,
+  use.names = TRUE,
+  fill = TRUE
+)
+
+observed_pairwise_auc <- primary_result$
+  pairwise_auc
+
+observed_sample_auc <- primary_result$
+  sample_auc
+
+pairwise_empirical_p <- (
+  1 +
+    sum(
+      permutation_null[
+        is_observed_labeling ==
+          FALSE,
+        pairwise_auc
+      ] >=
+        observed_pairwise_auc
+    )
+) /
+  (
+    1 +
+      sum(
+        permutation_null$
+          is_observed_labeling ==
+          FALSE
+      )
+  )
+
+sample_empirical_p <- (
+  1 +
+    sum(
+      permutation_null[
+        is_observed_labeling ==
+          FALSE,
+        sample_auc
+      ] >=
+        observed_sample_auc
+    )
+) /
+  (
+    1 +
+      sum(
+        permutation_null$
+          is_observed_labeling ==
+          FALSE
+      )
+  )
+
+permutation_summary <- data.table::data.table(
+  metric = c(
+    "pairwise_leave_pair_out_AUC",
+    "sample_level_AUC"
+  ),
+  observed = c(
+    observed_pairwise_auc,
+    observed_sample_auc
+  ),
+  null_median = c(
+    safe_median(
+      permutation_null[
+        is_observed_labeling ==
+          FALSE,
+        pairwise_auc
+      ]
+    ),
+    safe_median(
+      permutation_null[
+        is_observed_labeling ==
+          FALSE,
+        sample_auc
+      ]
+    )
+  ),
+  null_maximum = c(
+    max(
+      permutation_null[
+        is_observed_labeling ==
+          FALSE,
+        pairwise_auc
+      ],
+      na.rm = TRUE
+    ),
+    max(
+      permutation_null[
+        is_observed_labeling ==
+          FALSE,
+        sample_auc
+      ],
+      na.rm = TRUE
+    )
+  ),
+  empirical_p = c(
+    pairwise_empirical_p,
+    sample_empirical_p
+  ),
+  balanced_label_assignments =
+    length(
+      hfpef_assignments
+    ),
+  nonobserved_null_assignments =
+    sum(
+      permutation_null$
+        is_observed_labeling ==
+        FALSE
+    )
+)
+
+write_csv_safe(
+  permutation_null,
+  file.path(
+    DIRS$tables,
+    "12_stage7_exhaustive_balanced_label_permutation_null.csv"
+  )
+)
+
+write_csv_safe(
+  permutation_summary,
+  file.path(
+    DIRS$tables,
+    "13_stage7_permutation_summary.csv"
+  )
+)
+
+############################################################
+## 10. Prespecified panel and lambda sensitivity
+############################################################
+
+sensitivity_scenarios <- data.table::rbindlist(
+  list(
+    data.table::data.table(
+      scenario =
+        paste0(
+          "Primary_lambda_",
+          RIDGE_LAMBDA_SENSITIVITY
+        ),
+      panel =
+        "Primary_5_feature_panel",
+      lambda =
+        RIDGE_LAMBDA_SENSITIVITY
+    ),
+    data.table::data.table(
+      scenario =
+        "Extended_lambda_1",
+      panel =
+        "Extended_7_feature_panel",
+      lambda =
+        PRIMARY_RIDGE_LAMBDA
+    )
+  ),
+  use.names = TRUE,
+  fill = TRUE
+)
+
+sensitivity_records <- list()
+
+for (
+  scenario_index in seq_len(
+    nrow(
+      sensitivity_scenarios
+    )
+  )
+) {
+  scenario_i <- sensitivity_scenarios[
+    scenario_index
+  ]
+
+  feature_columns_i <- if (
+    scenario_i$
+      panel[1L] ==
+      "Primary_5_feature_panel"
+  ) {
+    PRIMARY_PANEL
+  } else {
+    EXTENDED_PANEL
+  }
+
+  result_i <- run_leave_pair_out(
+    feature_table =
+      sample_features,
+    feature_columns =
+      feature_columns_i,
+    labels =
+      sample_features$y,
+    lambda =
+      scenario_i$lambda[1L],
+    panel_name =
+      scenario_i$panel[1L],
+    store_details = TRUE
+  )
+
+  coefficient_summary_i <- result_i$
+    coefficients[
+      ,
+      .(
+        mean_absolute_coefficient =
+          mean(
+            abs(
+              coefficient
+            )
+          )
+      ),
+      by = feature
+    ]
+
+  top_feature_i <- if (
+    nrow(
+      coefficient_summary_i
+    ) > 0L
+  ) {
+    coefficient_summary_i[
+      order(
+        -mean_absolute_coefficient,
+        feature
+      ),
+      feature
+    ][1L]
+  } else {
+    NA_character_
+  }
+
+  sensitivity_records[[length(sensitivity_records) + 1L]] <- data.table::data.table(
+    scenario =
+      scenario_i$
+        scenario[1L],
+    panel =
+      scenario_i$
+        panel[1L],
+    lambda =
+      scenario_i$
+        lambda[1L],
+    features =
+      length(
+        feature_columns_i
+      ),
+    pairwise_auc =
+      result_i$
+        pairwise_auc,
+    sample_auc =
+      result_i$
+        sample_auc,
+    converged_folds =
+      result_i$
+        folds_converged,
+    total_folds =
+      result_i$
+        total_folds,
+    top_absolute_coefficient_feature =
+      top_feature_i
+  )
+}
+
+sensitivity_summary <- data.table::rbindlist(
+  sensitivity_records,
+  use.names = TRUE,
+  fill = TRUE
+)
+
+write_csv_safe(
+  sensitivity_summary,
+  file.path(
+    DIRS$tables,
+    "14_stage7_panel_and_lambda_sensitivity.csv"
+  )
+)
+
+############################################################
+## 11. Performance summary and checkpoint
+############################################################
+
+model_performance <- data.table::data.table(
+  metric = c(
+    "Primary pairwise leave-pair-out AUC",
+    "Primary sample-level AUC",
+    "Primary pairwise empirical permutation P",
+    "Primary sample-level empirical permutation P",
+    "Primary converged folds",
+    "Primary total folds",
+    "Biological samples",
+    "Control samples",
+    "HFpEF samples",
+    "Primary features",
+    "Extended features",
+    "Balanced label assignments"
+  ),
+  value = c(
+    primary_result$
+      pairwise_auc,
+    primary_result$
+      sample_auc,
+    pairwise_empirical_p,
+    sample_empirical_p,
+    primary_result$
+      folds_converged,
+    primary_result$
+      total_folds,
+    nrow(
+      sample_features
+    ),
+    sum(
+      sample_features$y ==
+        0L
+    ),
+    sum(
+      sample_features$y ==
+        1L
+    ),
+    length(
+      PRIMARY_PANEL
+    ),
+    length(
+      EXTENDED_PANEL
+    ),
+    nrow(
+      permutation_null
+    )
+  )
+)
+
+write_csv_safe(
+  model_performance,
+  file.path(
+    DIRS$tables,
+    "15_stage7_model_performance_summary.csv"
+  )
+)
 
 saveRDS(
   list(
-    network_integrity =
-      network_integrity,
-    candidate_resolution =
-      candidate_resolution,
-    program_summary =
-      program_summary,
-    full_candidate_detail =
-      full_candidate_detail,
-    full_candidate_summary =
-      full_candidate_summary,
-    stage5_audit =
-      stage5_audit,
-    bootstrap_results =
-      bootstrap_results,
-    bootstrap_summary =
-      bootstrap_summary,
-    tf_covariates =
-      tf_covariates,
-    null_pool =
-      null_pool,
-    null_effects =
-      null_effects,
-    null_draws =
-      null_draws,
-    null_summary =
-      null_summary,
-    final_robustness =
-      final_robustness
+    sample_features =
+      sample_features,
+    feature_definitions =
+      feature_definitions,
+    primary_result =
+      primary_result,
+    feature_importance =
+      feature_importance,
+    permutation_null =
+      permutation_null,
+    permutation_summary =
+      permutation_summary,
+    sensitivity_summary =
+      sensitivity_summary,
+    nfkb_communication =
+      nfkb_communication,
+    bhlhe40_communication =
+      bhlhe40_communication
   ),
   file.path(
     DIRS$objects,
-    "CHECKPOINT_stage5B_OFFLINE_scientific_results_pre_figures.rds"
+    "CHECKPOINT_stage7_scientific_results_pre_figures.rds"
   ),
   compress = FALSE
 )
 
 log_msg(
-  "Stage 5B OFFLINE scientific calculations checkpointed before figures."
+  "Stage 7 scientific calculations checkpointed before figures."
 )
 
 ############################################################
-## 14. Figures and source data
+## 12. Figures
 ############################################################
 
-candidate_order <- final_robustness[
-  order(
-    final_robustness_rank
+workflow_data <- data.table::data.table(
+  step = factor(
+    c(
+      "Stage 4\nTF activity",
+      "Stage 2/3\nprograms",
+      "Stage 6\ncommunication",
+      "Sample-level\nfeature panel",
+      "9-fold\nleave-pair-out",
+      "Exact linear\nattribution"
+    ),
+    levels = c(
+      "Stage 4\nTF activity",
+      "Stage 2/3\nprograms",
+      "Stage 6\ncommunication",
+      "Sample-level\nfeature panel",
+      "9-fold\nleave-pair-out",
+      "Exact linear\nattribution"
+    )
   ),
-  tf_symbol
-]
-
-full_plot_data <- data.table::copy(
-  full_candidate_summary
+  x = seq_len(6L),
+  y = 1
 )
 
-full_plot_data[
-  ,
-  tf_symbol := factor(
-    tf_symbol,
-    levels =
-      candidate_order
-  )
-]
-
-write_csv_safe(
-  full_plot_data,
-  file.path(
-    DIRS$source,
-    "Fig5B_A_full_candidate_recovery_source.csv"
-  )
-)
-
-plot_full <- ggplot2::ggplot(
-  full_plot_data,
+plot_workflow <- ggplot2::ggplot(
+  workflow_data,
   ggplot2::aes(
-    x = tf_symbol,
-    y =
-      primary_median_gap_reduction,
-    fill = tf_symbol
+    x = x,
+    y = y,
+    label = step
   )
 ) +
-  ggplot2::geom_hline(
-    yintercept = 0,
-    linetype = 2
+  ggplot2::geom_label(
+    size = 3.2,
+    label.size = 0.3,
+    fill = "white"
   ) +
-  ggplot2::geom_col(
-    width = 0.72,
-    show.legend = FALSE
-  ) +
-  ggplot2::labs(
-    title =
-      "Full-regulon candidate perturbation effects",
-    subtitle =
-      "Positive values indicate reduced HFpEF-Control separation of primary drug-opposed programs",
-    x = NULL,
-    y =
-      "Median primary-program gap reduction"
-  ) +
-  ggplot2::theme_bw(
-    base_size = 10
-  ) +
-  ggplot2::theme(
-    axis.text.x =
-      ggplot2::element_text(
-        angle = 35,
-        hjust = 1
-      )
-  )
-
-save_plot_bundle(
-  plot_full,
-  "Fig5B_A_full_candidate_recovery",
-  8.5,
-  6
-)
-
-bootstrap_plot_data <- data.table::copy(
-  bootstrap_results
-)
-
-bootstrap_plot_data[
-  ,
-  tf_symbol := factor(
-    tf_symbol,
-    levels =
-      candidate_order
-  )
-]
-
-write_csv_safe(
-  bootstrap_plot_data,
-  file.path(
-    DIRS$source,
-    "Fig5B_B_regulon_bootstrap_source.csv"
-  ),
-  compress = TRUE
-)
-
-plot_bootstrap <- ggplot2::ggplot(
-  bootstrap_plot_data,
-  ggplot2::aes(
-    x = tf_symbol,
-    y =
-      primary_median_gap_reduction,
-    fill = tf_symbol
-  )
-) +
-  ggplot2::geom_hline(
-    yintercept = 0,
-    linetype = 2
-  ) +
-  ggplot2::geom_violin(
-    scale = "width",
-    trim = TRUE,
-    alpha = 0.65,
-    show.legend = FALSE
-  ) +
-  ggplot2::geom_boxplot(
-    width = 0.14,
-    outlier.shape = NA,
-    show.legend = FALSE
-  ) +
-  ggplot2::labs(
-    title =
-      "Regulon-target bootstrap robustness",
-    subtitle =
-      paste0(
-        BOOTSTRAP_REPLICATES,
-        " replicates per candidate; ",
-        BOOTSTRAP_TARGET_FRACTION * 100,
-        "% of regulon targets retained"
+  ggplot2::geom_segment(
+    data =
+      workflow_data[
+        x < 6
+      ],
+    ggplot2::aes(
+      x =
+        x + 0.38,
+      xend =
+        x + 0.62,
+      y = y,
+      yend = y
+    ),
+    arrow =
+      grid::arrow(
+        length =
+          grid::unit(
+            0.12,
+            "inches"
+          )
       ),
-    x = NULL,
-    y =
-      "Primary-program gap reduction"
+    linewidth = 0.4,
+    inherit.aes = FALSE
   ) +
-  ggplot2::theme_bw(
-    base_size = 10
-  ) +
-  ggplot2::theme(
-    axis.text.x =
-      ggplot2::element_text(
-        angle = 35,
-        hjust = 1
-      )
-  )
-
-save_plot_bundle(
-  plot_bootstrap,
-  "Fig5B_B_regulon_bootstrap_distributions",
-  9,
-  6.5
-)
-
-null_plot_data <- data.table::copy(
-  null_summary
-)
-
-null_plot_data[
-  ,
-  tf_symbol := factor(
-    tf_symbol,
-    levels =
-      candidate_order
-  )
-]
-
-write_csv_safe(
-  null_plot_data,
-  file.path(
-    DIRS$source,
-    "Fig5B_C_random_null_percentile_source.csv"
-  )
-)
-
-plot_null <- ggplot2::ggplot(
-  null_plot_data,
-  ggplot2::aes(
-    x = tf_symbol,
-    y =
-      candidate_percentile,
-    fill = tf_symbol
-  )
-) +
-  ggplot2::geom_hline(
-    yintercept = 0.95,
-    linetype = 2
-  ) +
-  ggplot2::geom_col(
-    width = 0.72,
-    show.legend = FALSE
+  ggplot2::scale_x_continuous(
+    limits = c(
+      0.5,
+      6.5
+    )
   ) +
   ggplot2::scale_y_continuous(
+    limits = c(
+      0.65,
+      1.35
+    )
+  ) +
+  ggplot2::labs(
+    title =
+      "Stage 7 cross-stage constrained sample-level workflow",
+    subtitle =
+      "Biological samples only; no cell-level pseudoreplication"
+  ) +
+  ggplot2::theme_void(
+    base_size = 11
+  )
+
+write_csv_safe(
+  workflow_data,
+  file.path(
+    DIRS$source,
+    "Fig7A_workflow_source.csv"
+  )
+)
+
+save_plot_bundle(
+  plot_workflow,
+  "Fig7A_cross_stage_sample_level_workflow",
+  10.5,
+  3.0
+)
+
+sample_prediction_plot_data <- merge(
+  primary_result$
+    sample_predictions,
+  sample_meta[
+    ,
+    .(
+      sample_accession,
+      original_condition =
+        condition
+    )
+  ],
+  by = "sample_accession",
+  all.x = TRUE
+)
+
+sample_prediction_plot_data[
+  ,
+  sample_accession := factor(
+    sample_accession,
+    levels =
+      sample_prediction_plot_data[
+        order(
+          true_label,
+          mean_predicted_probability
+        ),
+        sample_accession
+      ]
+  )
+]
+
+plot_sample_predictions <- ggplot2::ggplot(
+  sample_prediction_plot_data,
+  ggplot2::aes(
+    x = sample_accession,
+    y =
+      mean_predicted_probability,
+    fill =
+      true_condition
+  )
+) +
+  ggplot2::geom_hline(
+    yintercept = 0.5,
+    linetype = 2
+  ) +
+  ggplot2::geom_col(
+    width = 0.72
+  ) +
+  ggplot2::scale_y_continuous(
+    limits = c(
+      0,
+      1
+    )
+  ) +
+  ggplot2::labs(
+    title =
+      "Leave-pair-out sample predictions",
+    subtitle = paste0(
+      "Pairwise AUC = ",
+      round(
+        primary_result$
+          pairwise_auc,
+        3
+      ),
+      "; sample AUC = ",
+      round(
+        primary_result$
+          sample_auc,
+        3
+      )
+    ),
+    x = NULL,
+    y =
+      "Mean held-out HFpEF probability",
+    fill =
+      "Observed group"
+  ) +
+  ggplot2::theme_bw(
+    base_size = 10
+  ) +
+  ggplot2::theme(
+    axis.text.x =
+      ggplot2::element_text(
+        angle = 35,
+        hjust = 1
+      )
+  )
+
+write_csv_safe(
+  sample_prediction_plot_data,
+  file.path(
+    DIRS$source,
+    "Fig7B_sample_predictions_source.csv"
+  )
+)
+
+save_plot_bundle(
+  plot_sample_predictions,
+  "Fig7B_leave_pair_out_sample_predictions",
+  7.5,
+  5.2
+)
+
+roc_data <- roc_curve_dt(
+  primary_result$
+    sample_predictions$
+      true_label,
+  primary_result$
+    sample_predictions$
+      mean_predicted_probability
+)
+
+plot_roc <- ggplot2::ggplot(
+  roc_data,
+  ggplot2::aes(
+    x =
+      false_positive_rate,
+    y =
+      true_positive_rate
+  )
+) +
+  ggplot2::geom_abline(
+    slope = 1,
+    intercept = 0,
+    linetype = 2
+  ) +
+  ggplot2::geom_step(
+    linewidth = 0.8
+  ) +
+  ggplot2::coord_equal() +
+  ggplot2::labs(
+    title =
+      "Sample-level ROC curve",
+    subtitle = paste0(
+      "Six-sample exploratory AUC = ",
+      round(
+        primary_result$
+          sample_auc,
+        3
+      )
+    ),
+    x =
+      "False-positive rate",
+    y =
+      "True-positive rate"
+  ) +
+  ggplot2::theme_bw(
+    base_size = 10
+  )
+
+write_csv_safe(
+  roc_data,
+  file.path(
+    DIRS$source,
+    "Fig7C_sample_ROC_source.csv"
+  )
+)
+
+save_plot_bundle(
+  plot_roc,
+  "Fig7C_sample_level_ROC",
+  5.2,
+  5.2
+)
+
+importance_plot_data <- data.table::copy(
+  feature_importance
+)
+
+importance_plot_data[
+  ,
+  feature := factor(
+    feature,
+    levels = rev(
+      feature[
+        order(
+          mean_absolute_logit_contribution
+        )
+      ]
+    )
+  )
+]
+
+plot_importance <- ggplot2::ggplot(
+  importance_plot_data,
+  ggplot2::aes(
+    x =
+      mean_absolute_logit_contribution,
+    y = feature,
+    size =
+      mean_absolute_coefficient,
+    fill =
+      positive_fold_fraction
+  )
+) +
+  ggplot2::geom_segment(
+    ggplot2::aes(
+      x = 0,
+      xend =
+        mean_absolute_logit_contribution,
+      y = feature,
+      yend = feature
+    ),
+    linewidth = 0.4
+  ) +
+  ggplot2::geom_point(
+    shape = 21
+  ) +
+  ggplot2::scale_fill_gradient(
+    low = "white",
+    high = "black",
+    limits = c(
+      0,
+      1
+    )
+  ) +
+  ggplot2::labs(
+    title =
+      "Exact additive linear-predictor attribution",
+    subtitle =
+      "Mean absolute held-out logit contribution; not a causal effect",
+    x =
+      "Mean absolute logit contribution",
+    y = NULL,
+    size =
+      "Mean absolute\ncoefficient",
+    fill =
+      "Positive coefficient\nfold fraction"
+  ) +
+  ggplot2::theme_bw(
+    base_size = 10
+  )
+
+write_csv_safe(
+  importance_plot_data,
+  file.path(
+    DIRS$source,
+    "Fig7D_feature_attribution_source.csv"
+  )
+)
+
+save_plot_bundle(
+  plot_importance,
+  "Fig7D_exact_linear_predictor_attribution",
+  8.2,
+  5.8
+)
+
+permutation_plot_data <- data.table::copy(
+  permutation_null
+)
+
+plot_permutation <- ggplot2::ggplot(
+  permutation_plot_data[
+    is_observed_labeling ==
+      FALSE
+  ],
+  ggplot2::aes(
+    x = pairwise_auc
+  )
+) +
+  ggplot2::geom_histogram(
+    binwidth = 1 / 9,
+    boundary = 0,
+    closed = "left",
+    color = "black",
+    fill = "white"
+  ) +
+  ggplot2::geom_vline(
+    xintercept =
+      primary_result$
+        pairwise_auc,
+    linewidth = 0.8
+  ) +
+  ggplot2::scale_x_continuous(
     limits = c(
       0,
       1
@@ -4291,20 +4512,137 @@ plot_null <- ggplot2::ggplot(
     breaks = seq(
       0,
       1,
-      by = 0.2
+      by = 1 / 9
     )
   ) +
   ggplot2::labs(
     title =
-      "Candidate percentiles in unbiased matched-TF null distributions",
-    subtitle =
-      "Matching used regulon size, TF-activity effect, and available TF-expression effect; no program-overlap filter",
-    x = NULL,
+      "Exhaustive balanced-label permutation null",
+    subtitle = paste0(
+      "Observed pairwise AUC = ",
+      round(
+        primary_result$
+          pairwise_auc,
+        3
+      ),
+      "; empirical P = ",
+      signif(
+        pairwise_empirical_p,
+        3
+      )
+    ),
+    x =
+      "Pairwise leave-pair-out AUC",
     y =
-      "Candidate percentile"
+      "Balanced label assignments"
   ) +
   ggplot2::theme_bw(
     base_size = 10
+  )
+
+write_csv_safe(
+  permutation_plot_data,
+  file.path(
+    DIRS$source,
+    "Fig7E_permutation_null_source.csv"
+  )
+)
+
+save_plot_bundle(
+  plot_permutation,
+  "Fig7E_exhaustive_balanced_label_permutation",
+  7.2,
+  5.2
+)
+
+heatmap_long <- data.table::melt(
+  sample_features[
+    ,
+    c(
+      "sample_accession",
+      "condition",
+      PRIMARY_PANEL
+    ),
+    with = FALSE
+  ],
+  id.vars = c(
+    "sample_accession",
+    "condition"
+  ),
+  variable.name =
+    "feature",
+  value.name =
+    "raw_value"
+)
+
+heatmap_long[
+  ,
+  z_value := {
+    scaled <- as.numeric(
+      scale(raw_value)
+    )
+
+    scaled[
+      !is.finite(scaled)
+    ] <- 0
+
+    scaled
+  },
+  by = feature
+]
+
+heatmap_long[
+  ,
+  sample_accession := factor(
+    sample_accession,
+    levels =
+      sample_meta[
+        order(condition),
+        sample_accession
+      ]
+  )
+]
+
+heatmap_long[
+  ,
+  feature := factor(
+    feature,
+    levels = rev(
+      PRIMARY_PANEL
+    )
+  )
+]
+
+plot_heatmap <- ggplot2::ggplot(
+  heatmap_long,
+  ggplot2::aes(
+    x = sample_accession,
+    y = feature,
+    fill = z_value
+  )
+) +
+  ggplot2::geom_tile(
+    color = "white",
+    linewidth = 0.3
+  ) +
+  ggplot2::scale_fill_gradient2(
+    low = "grey20",
+    mid = "white",
+    high = "grey80",
+    midpoint = 0
+  ) +
+  ggplot2::labs(
+    title =
+      "Primary cross-stage feature matrix",
+    subtitle =
+      "Display z-scores are for visualization only; model scaling was training-fold-specific",
+    x = NULL,
+    y = NULL,
+    fill =
+      "Display z-score"
+  ) +
+  ggplot2::theme_bw(
+    base_size = 9
   ) +
   ggplot2::theme(
     axis.text.x =
@@ -4314,406 +4652,151 @@ plot_null <- ggplot2::ggplot(
       )
   )
 
-save_plot_bundle(
-  plot_null,
-  "Fig5B_C_random_matched_TF_null_percentiles",
-  9,
-  6.5
-)
-
-rank_plot_data <- data.table::copy(
-  final_robustness
-)
-
-rank_plot_data[
-  ,
-  tf_symbol := factor(
-    tf_symbol,
-    levels = rev(
-      candidate_order
-    )
-  )
-]
-
 write_csv_safe(
-  rank_plot_data,
+  heatmap_long,
   file.path(
     DIRS$source,
-    "Fig5B_D_final_robustness_rank_source.csv"
+    "Fig7F_feature_heatmap_source.csv"
   )
 )
-
-plot_rank <- ggplot2::ggplot(
-  rank_plot_data,
-  ggplot2::aes(
-    x =
-      -final_robustness_score,
-    y = tf_symbol
-  )
-) +
-  ggplot2::geom_segment(
-    ggplot2::aes(
-      x =
-        -max(
-          final_robustness_score
-        ),
-      xend =
-        -final_robustness_score,
-      y = tf_symbol,
-      yend = tf_symbol
-    ),
-    color = "grey65",
-    linewidth = 0.5
-  ) +
-  ggplot2::geom_point(
-    ggplot2::aes(
-      size =
-        positive_recovery_probability,
-      fill =
-        candidate_percentile
-    ),
-    shape = 21,
-    color = "black"
-  ) +
-  ggplot2::scale_size_continuous(
-    limits = c(
-      0,
-      1
-    ),
-    range = c(
-      3,
-      8
-    )
-  ) +
-  ggplot2::scale_fill_gradient(
-    low = "white",
-    high = "black"
-  ) +
-  ggplot2::labs(
-    title =
-      "Offline Stage 5B candidate robustness rank",
-    subtitle =
-      "Rank aggregation across full-regulon recovery, bootstrap stability, matched-null performance, inflammation, and specificity",
-    x =
-      "Higher robustness performance",
-    y = NULL,
-    size =
-      "Bootstrap positive\nprobability",
-    fill =
-      "Matched-null\npercentile"
-  ) +
-  ggplot2::theme_bw(
-    base_size = 10
-  )
 
 save_plot_bundle(
-  plot_rank,
-  "Fig5B_D_final_candidate_robustness_rank",
-  9,
-  6.5
-)
-
-heatmap_columns <- c(
-  "primary_median_gap_reduction",
-  "median_primary_gap_reduction",
-  "positive_recovery_probability",
-  "top3_frequency",
-  "candidate_percentile",
-  "inflammation_median_gap_reduction",
-  "specificity_score"
-)
-
-heatmap_table <- final_robustness[
-  match(
-    candidate_order,
-    tf_symbol
-  )
-]
-
-heatmap_matrix <- as.matrix(
-  heatmap_table[
-    ,
-    ..heatmap_columns
-  ]
-)
-
-rownames(heatmap_matrix) <-
-  heatmap_table$tf_symbol
-
-heatmap_scaled <- scale(
-  heatmap_matrix
-)
-
-heatmap_scaled[
-  !is.finite(
-    heatmap_scaled
-  )
-] <- 0
-
-colnames(heatmap_scaled) <- c(
-  "Full recovery",
-  "Bootstrap recovery",
-  "Bootstrap positive probability",
-  "Bootstrap top-3 frequency",
-  "Matched-null percentile",
-  "Inflammation recovery",
-  "Specificity"
-)
-
-write_csv_safe(
-  data.table::as.data.table(
-    heatmap_scaled,
-    keep.rownames =
-      "tf_symbol"
-  ),
-  file.path(
-    DIRS$source,
-    "Fig5B_E_robustness_matrix_source.csv"
-  )
-)
-
-save_heatmap_bundle(
-  heatmap_scaled,
-  "Fig5B_E_candidate_robustness_matrix",
-  10,
-  7,
-  title =
-    "Full-regulon, bootstrap, and matched-null robustness"
+  plot_heatmap,
+  "Fig7F_primary_cross_stage_feature_heatmap",
+  8.5,
+  5.5
 )
 
 ############################################################
-## 15. Workbook, methods, and parameter records
+## 13. Figure audit, workbook, methods, and limitations
 ############################################################
 
-workbook_path <- file.path(
-  DIRS$tables,
-  "14_stage5B_OFFLINE_bootstrap_null_key_results.xlsx"
+expected_figure_stems <- c(
+  "Fig7A_cross_stage_sample_level_workflow",
+  "Fig7B_leave_pair_out_sample_predictions",
+  "Fig7C_sample_level_ROC",
+  "Fig7D_exact_linear_predictor_attribution",
+  "Fig7E_exhaustive_balanced_label_permutation",
+  "Fig7F_primary_cross_stage_feature_heatmap"
 )
 
-workbook_sheets <- list(
-  Network_integrity =
-    as.data.frame(
-      network_integrity
-    ),
-  Candidate_resolution =
-    as.data.frame(
-      candidate_resolution
-    ),
-  Program_definitions =
-    as.data.frame(
-      program_summary
-    ),
-  Full_candidate_summary =
-    as.data.frame(
-      full_candidate_summary
-    ),
-  Stage5_reproduction =
-    as.data.frame(
-      stage5_audit
-    ),
-  Bootstrap_summary =
-    as.data.frame(
-      bootstrap_summary
-    ),
-  Null_pool =
-    as.data.frame(
-      null_pool
-    ),
-  Null_summary =
-    as.data.frame(
-      null_summary
-    ),
-  Final_robustness =
-    as.data.frame(
-      final_robustness
-    )
-)
-
-writexl::write_xlsx(
-  workbook_sheets,
-  workbook_path
-)
-
-xlsx_contents <- utils::unzip(
-  workbook_path,
-  list = TRUE
-)
-
-xlsx_required_patterns <- c(
-  "xl/workbook.xml",
-  "xl/worksheets/sheet1.xml",
-  "[Content_Types].xml"
-)
-
-xlsx_structure_ok <- all(
-  vapply(
-    xlsx_required_patterns,
-    function(pattern_i) {
-      any(
-        xlsx_contents$Name ==
-          pattern_i
-      )
-    },
-    logical(1)
+audit_figure <- function(stem_value) {
+  extensions <- c(
+    png = ".png",
+    pdf = ".pdf",
+    tiff = ".tiff"
   )
-)
 
-if (!xlsx_structure_ok) {
-  stop(
-    "Generated XLSX did not pass internal structure validation."
+  paths <- file.path(
+    DIRS$figures,
+    paste0(
+      stem_value,
+      extensions
+    )
+  )
+
+  names(paths) <- names(
+    extensions
+  )
+
+  exists_vector <- file.exists(
+    paths
+  )
+
+  size_vector <- rep(
+    NA_real_,
+    length(paths)
+  )
+
+  names(size_vector) <- names(
+    paths
+  )
+
+  size_vector[
+    exists_vector
+  ] <- as.numeric(
+    file.info(
+      paths[
+        exists_vector
+      ]
+    )$size
+  )
+
+  data.table::data.table(
+    stem =
+      stem_value,
+    png_exists =
+      unname(
+        exists_vector["png"]
+      ),
+    pdf_exists =
+      unname(
+        exists_vector["pdf"]
+      ),
+    tiff_exists =
+      unname(
+        exists_vector["tiff"]
+      ),
+    png_size_bytes =
+      unname(
+        size_vector["png"]
+      ),
+    pdf_size_bytes =
+      unname(
+        size_vector["pdf"]
+      ),
+    tiff_size_bytes =
+      unname(
+        size_vector["tiff"]
+      ),
+    files_valid = (
+      all(exists_vector) &&
+        all(
+          is.finite(
+            size_vector
+          ) &
+            size_vector > 0
+        )
+    )
   )
 }
 
-parameter_table <- data.table::data.table(
-  parameter = c(
-    "Random seed",
-    "Candidate TFs",
-    "External network access",
-    "Primary perturbation mode",
-    "Primary perturbation strength",
-    "Perturbation formulation",
-    "Bootstrap replicates",
-    "Bootstrap target fraction",
-    "Random null draws per candidate",
-    "Nearest null matching pool",
-    "Minimum null pool",
-    "Null matching covariates",
-    "Program-overlap filter in null matching",
-    "Primary signature size",
-    "Minimum regulon size",
-    "Maximum target shift",
-    "Stage 5 reproduction tolerance",
-    "Inferential unit",
-    "Nfkb1 forced"
+figure_audit <- data.table::rbindlist(
+  lapply(
+    expected_figure_stems,
+    audit_figure
   ),
-  value = c(
-    "20260714",
-    paste(
-      candidate_tfs,
-      collapse = "; "
-    ),
-    "None; fully offline",
-    "disease_normalization",
-    "1.00",
-    "weighted minimum-norm target adjustment",
-    as.character(
-      BOOTSTRAP_REPLICATES
-    ),
-    as.character(
-      BOOTSTRAP_TARGET_FRACTION
-    ),
-    as.character(
-      NULL_DRAWS_PER_CANDIDATE
-    ),
-    as.character(
-      NULL_NEAREST_POOL_SIZE
-    ),
-    as.character(
-      NULL_MIN_POOL_SIZE
-    ),
-    "log regulon size; absolute TF-activity effect; available absolute TF-expression effect",
-    "FALSE",
-    as.character(
-      PRIMARY_SIGNATURE_SIZE
-    ),
-    as.character(
-      MIN_TARGETS_PER_REGULON
-    ),
-    as.character(
-      MAX_ABS_GENE_SHIFT_SD
-    ),
-    as.character(
-      STAGE5_AUDIT_TOLERANCE
-    ),
-    "Biological sample",
-    "FALSE"
-  ),
-  rationale = c(
-    "Reproducibility",
-    "Prespecified from completed Stage 4 and Stage 5",
-    "Avoid unstable external APIs and preserve an auditable offline workflow",
-    "Moves each HFpEF TF activity to the Control reference",
-    "Matches the primary Stage 5 v2 comparison",
-    "Preserves the signed Stage 4 regulon activity definition",
-    "Quantify dependence on candidate target composition",
-    "Retain most targets while generating meaningful target-set variation",
-    "Generate a stable empirical matched background",
-    "Use local covariate matching without program-overlap selection",
-    "Avoid unstable small null pools",
-    "Control network size and observed TF signal magnitude",
-    "Prevent biased selection of low-overlap negative controls",
-    "Locked primary Stage 2 program size",
-    "Avoid unstable small regulons",
-    "Prevent implausibly large predicted expression shifts",
-    "Require numerical reproduction of Stage 5 v2",
-    "Avoid cell-level pseudoreplication",
-    "No candidate is manually promoted"
-  )
+  use.names = TRUE,
+  fill = TRUE
 )
+
+if (
+  nrow(figure_audit) !=
+    length(
+      expected_figure_stems
+    ) ||
+  any(
+    figure_audit$
+      files_valid != TRUE
+  )
+) {
+  stop(
+    "At least one Stage 7 figure failed the direct disk audit."
+  )
+}
 
 write_csv_safe(
-  parameter_table,
+  figure_audit,
   file.path(
-    DIRS$methods,
-    "stage5B_OFFLINE_parameters_and_rationale.csv"
+    DIRS$tables,
+    "16_stage7_figure_export_audit.csv"
   )
 )
-
-methods_text <- c(
-  "HFpEF Stage 5B OFFLINE FIXED v1",
-  "DoRothEA regulon bootstrap and unbiased matched-TF null distributions",
-  "",
-  "Input boundary:",
-  "- Stage 5B loaded the completed Stage 4 sample-level macrophage pseudobulk expression, signed DoRothEA A-C TF-target network, regulon activity matrix, and Stage 2/3 program definitions.",
-  "- Stage 5B loaded the completed Stage 5 v2 candidate table only for numerical reproduction auditing.",
-  "- No raw single-cell processing, clustering, annotation, differential expression, Stage 4 activity inference, or Stage 5 multi-mode perturbation was repeated.",
-  "",
-  "Full-regulon reproduction:",
-  "- The six prespecified candidates were recalculated with the primary Stage 5 v2 disease-normalizing weighted minimum-norm perturbation.",
-  "- Recalculated primary program-recovery values were required to match Stage 5 v2 within an absolute tolerance of 1e-6.",
-  "",
-  "Regulon bootstrap:",
-  "- For each candidate, 500 replicates retained 80% of the locked DoRothEA regulon targets without replacement.",
-  "- Candidate activity, virtual perturbation, program recovery, and cross-candidate rank were recalculated in every replicate.",
-  "- Reported outputs include median recovery, 2.5th and 97.5th percentiles, probability of positive recovery, and top-1/top-3 frequencies.",
-  "",
-  "Matched random-TF null:",
-  "- Null TFs were matched on log regulon size and absolute TF-activity effect.",
-  "- Absolute TF-expression effect was also used when the candidate TF itself had detectable expression; missing null-TF expression received a predefined distance penalty rather than being silently excluded.",
-  "- Stage 2 or Stage 3 program overlap was not used to select null TFs.",
-  "- The 60 nearest eligible TFs formed each local pool and 1,000 distance-weighted draws with replacement generated each empirical null distribution.",
-  "- Candidate percentiles and one-sided empirical P values compare candidate primary-program recovery with the matched background.",
-  "",
-  "Claim boundary:",
-  "- Stage 5B is an offline computational robustness analysis, not experimental perturbation.",
-  "- Bootstrap intervals quantify regulon-target dependence and are not biological population confidence intervals.",
-  "- Empirical P values are candidate-prioritization statistics and do not demonstrate causal regulation.",
-  "- Nfkb1 was not forced into the final rank."
-)
-
-writeLines(
-  methods_text,
-  file.path(
-    DIRS$methods,
-    "stage5B_OFFLINE_methods_and_claim_boundaries.txt"
-  ),
-  useBytes = TRUE
-)
-
-capture.output(
-  sessionInfo(),
-  file = file.path(
-    DIRS$methods,
-    "sessionInfo.txt"
-  )
-)
-
-############################################################
-## 16. Completion checks and final status
-############################################################
 
 warnings_table <- if (
-  length(warning_records) > 0L
+  length(
+    warning_records
+  ) > 0L
 ) {
   data.table::rbindlist(
     warning_records,
@@ -4733,111 +4816,436 @@ write_csv_safe(
   warnings_table,
   file.path(
     DIRS$tables,
-    "15_stage5B_warnings_and_nonfatal_issues.csv"
+    "17_stage7_warnings_and_nonfatal_issues.csv"
   )
 )
 
-minimum_null_pool_size <- min(
-  null_pool[
-    ,
-    .N,
-    by = candidate_tf
-  ]$N
+stage7_correction_audit <- data.table::data.table(
+  item = c(
+    "Failed_v1_step",
+    "Root_cause",
+    "Correction",
+    "Additional_runtime_guards",
+    "Scientific_definition_changed"
+  ),
+  value = c(
+    "Nfkb1/Rela communication-feature construction",
+    "sample_accession appeared both as a grouped key and as an explicit output column in ligand_sample",
+    "Removed sample_accession from j and retained it only through by = .(sample_accession)",
+    "Unique column-name checks, one-row-per-sample checks, and locked sample-order checks after every grouped summary and merge",
+    "FALSE"
+  )
 )
+
+write_csv_safe(
+  stage7_correction_audit,
+  file.path(
+    DIRS$methods,
+    "stage7_FINAL_v2_correction_audit.csv"
+  )
+)
+
+limitations <- data.table::data.table(
+  limitation = c(
+    "Sample size",
+    "Internal evidence reuse",
+    "No clinical-model claim",
+    "Attribution interpretation",
+    "Permutation resolution",
+    "Communication score",
+    "Feature panel"
+  ),
+  statement = c(
+    "Only six biological samples were available. Model results are exploratory and cannot establish generalizable predictive performance.",
+    "Stage 4-6 features and Stage 7 outcomes derive from the same six samples. Sample-held-out fitting prevents direct row leakage but does not create an independent validation cohort.",
+    "The analysis is not a diagnostic model and should not be reported as a clinically validated classifier.",
+    "beta multiplied by the held-out standardized feature value is an exact additive contribution to the linear predictor, not a causal effect and not a nonlinear SHAP estimate.",
+    "There are only 20 possible balanced 3-versus-3 label assignments, so empirical P-value resolution is coarse.",
+    "The communication-burden features summarize Stage 6 ligand-receptor axes and do not prove physical signaling.",
+    "The primary and extended feature panels were prespecified; no performance-based feature selection was used."
+  )
+)
+
+write_csv_safe(
+  limitations,
+  file.path(
+    DIRS$methods,
+    "stage7_limitations_and_claim_boundaries.csv"
+  )
+)
+
+parameter_table <- data.table::data.table(
+  parameter = c(
+    "Random seed",
+    "Biological modeling unit",
+    "Validation",
+    "Primary panel",
+    "Extended panel",
+    "Primary ridge lambda",
+    "Lambda sensitivity",
+    "Model optimization",
+    "Balanced label assignments",
+    "NFKB communication axes",
+    "Bhlhe40 communication axes",
+    "Strict-support weight",
+    "Feature selection",
+    "Clinical classifier claim",
+    "Attribution"
+  ),
+  value = c(
+    "20260714",
+    "Biological sample",
+    "Exhaustive leave-one-Control-plus-one-HFpEF-pair-out; 9 pairs",
+    paste(
+      PRIMARY_PANEL,
+      collapse = ";"
+    ),
+    paste(
+      EXTENDED_PANEL,
+      collapse = ";"
+    ),
+    as.character(
+      PRIMARY_RIDGE_LAMBDA
+    ),
+    paste(
+      RIDGE_LAMBDA_SENSITIVITY,
+      collapse = ";"
+    ),
+    "Base-R BFGS ridge logistic regression with analytic gradient",
+    as.character(
+      nrow(
+        permutation_null
+      )
+    ),
+    as.character(
+      nrow(
+        nfkb_communication$
+          axes
+      )
+    ),
+    as.character(
+      nrow(
+        bhlhe40_communication$
+          axes
+      )
+    ),
+    as.character(
+      STRICT_SUPPORT_WEIGHT
+    ),
+    "None; panels prespecified before modeling",
+    "FALSE",
+    "Exact additive linear-predictor contribution: beta_j multiplied by training-standardized held-out feature_j"
+  ),
+  rationale = c(
+    "Reproducibility",
+    "Avoid cell-level pseudoreplication",
+    "Every validation fold contains one held-out sample from each class",
+    "Compact cross-stage biological hypothesis",
+    "Prespecified sensitivity analysis",
+    "Avoid unstable tuning with six samples",
+    "Penalty sensitivity only",
+    "Avoid external ML-package API dependence",
+    "Exact enumeration of all balanced sample labels",
+    "Summarize prioritized NFKB1-RELA communication",
+    "Retain BHLHE40 communication contrast",
+    "Upweight strict cross-stage support without excluding other axes",
+    "Avoid outcome-driven selection",
+    "Six samples are insufficient",
+    "Linear-logit decomposition with an explicit interpretation boundary"
+  )
+)
+
+write_csv_safe(
+  parameter_table,
+  file.path(
+    DIRS$methods,
+    "stage7_parameters_and_rationale.csv"
+  )
+)
+
+methods_text <- c(
+  "HFpEF Stage 7 FINAL v2",
+  "Cross-stage constrained sample-level ridge classification and exact additive linear-predictor attribution",
+  "",
+  "Input boundary:",
+  "- Stage 4 supplied sample-level macrophage TF activity and macrophage pseudobulk log2-CPM.",
+  "- Stage 5B fixed Bhlhe40, Nfkb1, and Rela as the Stage 7 TF candidates.",
+  "- Stage 6 supplied prioritized macrophage-to-vascular/stromal ligand-receptor axes and selected ligand/receptor expression by biological sample.",
+  "",
+  "Feature construction:",
+  "- FINAL v2 removed a duplicated sample_accession grouping column from the Stage 6 ligand summary that caused merge.data.table to stop in FINAL v1.",
+  "- Every grouped ligand/receptor summary and merge product was required to have unique column names and one row per biological-sample key.",
+  "- The locked six-sample order was restored and verified after every communication-feature merge.",
+  "- The primary panel contained three candidate TF activities, the Full Stage 2 Top150 drug-opposed macrophage program score, and an Nfkb1/Rela communication-burden score.",
+  "- The extended sensitivity panel additionally contained the Stage3-supported Top150 program score and Bhlhe40 communication burden.",
+  "- Communication burden was calculated from oriented macrophage ligand and receiver receptor-component log2-CPM, weighted by inverse square-root axis rank and a prespecified strict-support multiplier.",
+  "",
+  "Validation and model:",
+  "- The model used six biological samples only.",
+  "- Each of the nine folds held out one Control and one HFpEF sample.",
+  "- Feature imputation and standardization were estimated from the four training samples in each fold.",
+  "- A fixed-penalty ridge logistic regression was fitted with base-R BFGS optimization and analytic gradients.",
+  "- No outcome-driven feature selection or hyperparameter tuning was performed.",
+  "",
+  "Permutation null:",
+  "- All 20 balanced 3-versus-3 sample-label assignments were evaluated with the same primary model and leave-pair-out workflow.",
+  "- Empirical P values compare the observed performance with the 19 nonobserved balanced label assignments.",
+  "",
+  "Attribution:",
+  "- For each held-out prediction, feature attribution was beta_j multiplied by the training-standardized held-out feature value.",
+  "- Contributions sum with the intercept to the fitted linear predictor.",
+  "- These are exact additive logit contributions for the linear model, not causal effects and not a general nonlinear SHAP analysis.",
+  "",
+  "Claim boundary:",
+  "- Stage 7 is an exploratory internal separability analysis.",
+  "- It is not external validation and not a clinical prediction model."
+)
+
+writeLines(
+  methods_text,
+  file.path(
+    DIRS$methods,
+    "stage7_methods_and_claim_boundaries.txt"
+  ),
+  useBytes = TRUE
+)
+
+capture.output(
+  sessionInfo(),
+  file = file.path(
+    DIRS$methods,
+    "sessionInfo.txt"
+  )
+)
+
+workbook_path <- file.path(
+  DIRS$tables,
+  "18_stage7_cross_stage_sample_ridge_key_results.xlsx"
+)
+
+workbook_sheets <- list(
+  Upstream_status =
+    as.data.frame(
+      upstream_status_audit
+    ),
+  Candidate_TFs =
+    as.data.frame(
+      candidate_cross_stage_manifest
+    ),
+  Feature_definitions =
+    as.data.frame(
+      feature_definitions
+    ),
+  Sample_features =
+    as.data.frame(
+      sample_features
+    ),
+  Fold_predictions =
+    as.data.frame(
+      primary_result$
+        predictions
+    ),
+  Fold_performance =
+    as.data.frame(
+      primary_result$
+        folds
+    ),
+  Sample_predictions =
+    as.data.frame(
+      primary_result$
+        sample_predictions
+    ),
+  Attribution =
+    as.data.frame(
+      feature_importance
+    ),
+  Permutation_summary =
+    as.data.frame(
+      permutation_summary
+    ),
+  Sensitivity =
+    as.data.frame(
+      sensitivity_summary
+    ),
+  Figure_audit =
+    as.data.frame(
+      figure_audit
+    )
+)
+
+writexl::write_xlsx(
+  workbook_sheets,
+  workbook_path
+)
+
+xlsx_contents <- utils::unzip(
+  workbook_path,
+  list = TRUE
+)
+
+xlsx_structure_ok <- all(
+  c(
+    "[Content_Types].xml",
+    "xl/workbook.xml",
+    "xl/worksheets/sheet1.xml"
+  ) %in%
+    xlsx_contents$Name
+)
+
+if (!xlsx_structure_ok) {
+  stop(
+    "Stage 7 workbook failed internal structure validation."
+  )
+}
+
+############################################################
+## 14. Scientific completion checks and final status
+############################################################
 
 scientific_checks <- data.table::data.table(
   check = c(
+    "Stage 3 completed",
     "Stage 4 completed",
-    "Stage 5 v2 completed",
-    "Stage 4 failed checks",
-    "Stage 5 failed checks",
+    "Stage 5B completed",
+    "Stage 6 completed",
+    "Upstream failed checks",
     "Biological samples",
     "Control samples",
     "HFpEF samples",
-    "Offline external network calls",
-    "DoRothEA integrity failures",
-    "Candidate TFs resolved",
-    "Candidate TF activities available",
-    "Full candidate summaries",
-    "Stage 5 reproduction rows",
-    "Stage 5 reproduction failures",
-    "Bootstrap rows",
-    "Bootstrap replicates per candidate",
-    "Minimum matched null pool",
-    "Null draw rows",
-    "Null summary rows",
-    "Program-overlap filtering absent",
-    "Final candidate rows",
+    "Candidate TF activities",
+    "Primary features",
+    "Extended features",
+    "Primary leave-pair-out folds",
+    "Primary prediction rows",
+    "Primary sample prediction rows",
+    "Primary converged folds",
+    "Balanced label assignments",
+    "Permutation observed labeling",
+    "Feature attribution rows",
+    "Sensitivity scenarios",
+    "Required figures",
+    "Figure failures",
     "Scientific checkpoint",
     "Workbook",
     "Workbook structure"
   ),
   observed = c(
     as.integer(
-      stage4_status$
-        overall_status[1L] %in%
-        allowed_stage4_status
+      stage3_status$
+        overall_status[1L] ==
+        expected_status[
+          "Stage3"
+        ]
     ),
     as.integer(
-      stage5_status$
+      stage4_status$
         overall_status[1L] ==
-        "COMPLETED_STAGE5_READY_FOR_REVIEW"
+        expected_status[
+          "Stage4"
+        ]
+    ),
+    as.integer(
+      stage5b_status$
+        overall_status[1L] ==
+        expected_status[
+          "Stage5B"
+        ]
+    ),
+    as.integer(
+      stage6_status$
+        overall_status[1L] ==
+        expected_status[
+          "Stage6"
+        ]
     ),
     sum(
-      stage4_checks$status !=
+      stage3_checks$status !=
         "PASS"
+    ) +
+      sum(
+        stage4_checks$status !=
+          "PASS"
+      ) +
+      sum(
+        stage5b_checks$status !=
+          "PASS"
+      ) +
+      sum(
+        stage6_checks$status !=
+          "PASS"
+      ),
+    nrow(
+      sample_features
     ),
     sum(
-      stage5_checks$status !=
-        "PASS"
-    ),
-    nrow(sample_meta),
-    sum(
-      sample_meta$condition ==
-        "Control"
+      sample_features$y ==
+        0L
     ),
     sum(
-      sample_meta$condition ==
-        "HFpEF"
+      sample_features$y ==
+        1L
     ),
-    0L,
-    sum(
-      network_integrity$
-        target_count_match != TRUE
-    ),
-    nrow(candidate_resolution),
     sum(
       candidate_resolution$
-        activity_available == TRUE
-    ),
-    nrow(full_candidate_summary),
-    nrow(stage5_audit),
-    sum(
-      stage5_audit$
-        within_tolerance != TRUE
-    ),
-    nrow(bootstrap_results),
-    min(
-      bootstrap_results[
-        ,
-        .N,
-        by = tf_symbol
-      ]$N
-    ),
-    minimum_null_pool_size,
-    nrow(null_draws),
-    nrow(null_summary),
-    sum(
-      null_pool$
-        program_overlap_filter_used ==
+        activity_available ==
         TRUE
     ),
-    nrow(final_robustness),
+    length(
+      intersect(
+        PRIMARY_PANEL,
+        names(
+          sample_features
+        )
+      )
+    ),
+    length(
+      intersect(
+        EXTENDED_PANEL,
+        names(
+          sample_features
+        )
+      )
+    ),
+    nrow(
+      primary_result$
+        folds
+    ),
+    nrow(
+      primary_result$
+        predictions
+    ),
+    nrow(
+      primary_result$
+        sample_predictions
+    ),
+    primary_result$
+      folds_converged,
+    nrow(
+      permutation_null
+    ),
+    sum(
+      permutation_null$
+        is_observed_labeling ==
+        TRUE
+    ),
+    nrow(
+      feature_importance
+    ),
+    nrow(
+      sensitivity_summary
+    ),
+    nrow(
+      figure_audit
+    ),
+    sum(
+      figure_audit$
+        files_valid != TRUE
+    ),
     as.integer(
       file.exists(
         file.path(
           DIRS$objects,
-          "CHECKPOINT_stage5B_OFFLINE_scientific_results_pre_figures.rds"
+          "CHECKPOINT_stage7_scientific_results_pre_figures.rds"
         )
       )
     ),
@@ -4851,70 +5259,49 @@ scientific_checks <- data.table::data.table(
     )
   ),
   expected = c(
-    1L,
-    1L,
-    0L,
-    0L,
-    6L,
-    3L,
-    3L,
-    0L,
-    0L,
+    1,
+    1,
+    1,
+    1,
+    0,
+    6,
+    3,
+    3,
+    3,
     length(
-      candidate_tfs
+      PRIMARY_PANEL
     ),
     length(
-      candidate_tfs
+      EXTENDED_PANEL
     ),
+    9,
+    18,
+    6,
+    9,
+    20,
+    1,
     length(
-      candidate_tfs
+      PRIMARY_PANEL
     ),
+    4,
     length(
-      candidate_tfs
+      expected_figure_stems
     ),
-    0L,
-    BOOTSTRAP_REPLICATES *
-      length(candidate_tfs),
-    BOOTSTRAP_REPLICATES,
-    NULL_MIN_POOL_SIZE,
-    NULL_DRAWS_PER_CANDIDATE *
-      length(candidate_tfs),
-    length(
-      candidate_tfs
-    ),
-    0L,
-    length(
-      candidate_tfs
-    ),
-    1L,
-    1L,
-    1L
+    0,
+    1,
+    1,
+    1
   ),
   comparison = c(
-    "equal",
-    "equal",
-    "equal",
-    "equal",
-    "equal",
-    "equal",
-    "equal",
-    "equal",
-    "equal",
-    "equal",
-    "equal",
-    "equal",
-    "equal",
-    "equal",
-    "equal",
-    "equal",
+    rep(
+      "equal",
+      14
+    ),
     "at_least",
-    "equal",
-    "equal",
-    "equal",
-    "equal",
-    "equal",
-    "equal",
-    "equal"
+    rep(
+      "equal",
+      9
+    )
   )
 )
 
@@ -4935,75 +5322,38 @@ write_csv_safe(
   scientific_checks,
   file.path(
     DIRS$tables,
-    "16_stage5B_scientific_completion_checks.csv"
+    "19_stage7_scientific_completion_checks.csv"
   )
 )
 
-script_copy_status <-
-  "NOT_DETECTED"
-
 if (
-  length(SCRIPT_FILE) == 1L &&
-  !is.na(SCRIPT_FILE) &&
-  file.exists(SCRIPT_FILE)
+  any(
+    scientific_checks$status !=
+      "PASS"
+  )
 ) {
-  methods_script <- file.path(
-    DIRS$methods,
-    basename(
-      EXPECTED_SCRIPT_FILE
+  failed_checks <- scientific_checks[
+    status != "PASS",
+    check
+  ]
+
+  stop(
+    "Stage 7 scientific completion check(s) failed: ",
+    paste(
+      failed_checks,
+      collapse = "; "
     )
   )
-
-  check_script <- file.path(
-    DIRS$check,
-    basename(
-      EXPECTED_SCRIPT_FILE
-    )
-  )
-
-  copied_methods <- file.copy(
-    SCRIPT_FILE,
-    methods_script,
-    overwrite = TRUE
-  )
-
-  copied_check <- file.copy(
-    SCRIPT_FILE,
-    check_script,
-    overwrite = TRUE
-  )
-
-  script_copy_status <- if (
-    isTRUE(copied_methods) &&
-    isTRUE(copied_check)
-  ) {
-    "COPIED"
-  } else {
-    "COPY_FAILED"
-  }
 }
 
 END_TIME <- Sys.time()
 
-overall_status <- if (
-  all(
-    scientific_checks$status ==
-      "PASS"
-  )
-) {
-  "COMPLETED_STAGE5B_OFFLINE_READY_FOR_REVIEW"
-} else {
-  "COMPLETED_STAGE5B_OFFLINE_REVIEW_REQUIRED"
-}
-
-nfkb1_rank <- final_robustness[
-  gene_key(tf_symbol) ==
-    "NFKB1",
-  final_robustness_rank
-]
+overall_status <-
+  "COMPLETED_STAGE7_READY_FOR_REVIEW"
 
 run_status <- data.table::data.table(
-  stage = STAGE_NAME,
+  stage =
+    STAGE_NAME,
   start_time = format(
     START_TIME,
     "%Y-%m-%d %H:%M:%S"
@@ -5020,39 +5370,45 @@ run_status <- data.table::data.table(
         units = "mins"
       )
     ),
-    2
+    3
   ),
   biological_samples =
-    nrow(sample_meta),
-  candidate_TFs =
-    paste(
-      candidate_tfs,
-      collapse = ";"
+    nrow(
+      sample_features
     ),
-  external_network_calls = 0L,
-  bootstrap_replicates_per_candidate =
-    BOOTSTRAP_REPLICATES,
-  bootstrap_rows =
-    nrow(bootstrap_results),
-  null_draws_per_candidate =
-    NULL_DRAWS_PER_CANDIDATE,
-  null_draw_rows =
-    nrow(null_draws),
-  top_robust_candidate =
-    final_robustness$
-      tf_symbol[1L],
-  Nfkb1_rank = if (
-    length(nfkb1_rank) == 1L
-  ) {
-    nfkb1_rank
-  } else {
-    NA_integer_
-  },
-  Nfkb1_forced = FALSE,
+  primary_features =
+    length(
+      PRIMARY_PANEL
+    ),
+  extended_features =
+    length(
+      EXTENDED_PANEL
+    ),
+  primary_ridge_lambda =
+    PRIMARY_RIDGE_LAMBDA,
+  leave_pair_out_folds =
+    primary_result$
+      total_folds,
+  converged_folds =
+    primary_result$
+      folds_converged,
+  pairwise_auc =
+    primary_result$
+      pairwise_auc,
+  sample_auc =
+    primary_result$
+      sample_auc,
+  pairwise_empirical_p =
+    pairwise_empirical_p,
+  sample_empirical_p =
+    sample_empirical_p,
+  top_attributed_feature =
+    feature_importance$
+      feature[1L],
   warnings =
-    nrow(warnings_table),
-  script_copy_status =
-    script_copy_status,
+    nrow(
+      warnings_table
+    ),
   scientific_checks_failed =
     sum(
       scientific_checks$status !=
@@ -5066,131 +5422,146 @@ write_csv_safe(
   run_status,
   file.path(
     DIRS$tables,
-    "17_stage5B_run_status.csv"
+    "20_stage7_run_status.csv"
   )
 )
 
 readme <- c(
-  "HFpEF Reanalysis Project - Stage 5B OFFLINE FIXED v1",
-  "DoRothEA regulon bootstrap and unbiased matched-TF null distributions",
+  "HFpEF Reanalysis Project - Stage 7 FINAL v2",
+  "Cross-stage constrained sample-level ridge classification and exact additive linear-predictor attribution",
   "",
   paste0(
-    "Overall status: ",
+    "Status: ",
     overall_status
   ),
+  "",
   paste0(
-    "Top robustness candidate: ",
-    final_robustness$
-      tf_symbol[1L]
-  ),
-  paste0(
-    "Nfkb1 rank: ",
-    ifelse(
-      length(nfkb1_rank) == 1L,
-      nfkb1_rank,
-      "not ranked"
+    "Primary pairwise AUC: ",
+    round(
+      primary_result$
+        pairwise_auc,
+      4
     )
   ),
+  paste0(
+    "Primary sample AUC: ",
+    round(
+      primary_result$
+        sample_auc,
+      4
+    )
+  ),
+  paste0(
+    "Balanced-label pairwise empirical P: ",
+    signif(
+      pairwise_empirical_p,
+      4
+    )
+  ),
+  paste0(
+    "Top attributed feature: ",
+    feature_importance$
+      feature[1L]
+  ),
   "",
-  "Primary outputs:",
-  "- Exact reproduction audit against Stage 5 v2.",
-  "- 500 80%-target regulon bootstrap replicates per candidate.",
-  "- 1,000 matched random-TF null draws per candidate.",
-  "- Null matching without Stage 2/3 program-overlap filtering.",
-  "- Transparent final rank aggregation without forcing Nfkb1.",
+  "This is an exploratory internal six-sample analysis, not a clinical classifier or external validation.",
   "",
-  "This stage is fully offline and does not use CollecTRI, decoupleR, OmnipathR, or internet access.",
-  "",
-  "Upload the Stage 5B OFFLINE CHECK package before Stage 6."
+  "Upload the Stage 7 CHECK package before Stage 8."
 )
 
 writeLines(
   readme,
   file.path(
     OUT_DIR,
-    "README_stage5B_OFFLINE.txt"
+    "README_stage7.txt"
   ),
   useBytes = TRUE
 )
 
 ############################################################
-## 17. CHECK package and hashes
+## 15. CHECK package
 ############################################################
+
+script_copy_status <-
+  "NOT_DETECTED"
+
+if (
+  length(SCRIPT_FILE) == 1L &&
+  !is.na(SCRIPT_FILE) &&
+  file.exists(SCRIPT_FILE)
+) {
+  methods_copy <- file.copy(
+    SCRIPT_FILE,
+    file.path(
+      DIRS$methods,
+      basename(
+        EXPECTED_SCRIPT_FILE
+      )
+    ),
+    overwrite = TRUE
+  )
+
+  check_copy <- file.copy(
+    SCRIPT_FILE,
+    file.path(
+      DIRS$check,
+      basename(
+        EXPECTED_SCRIPT_FILE
+      )
+    ),
+    overwrite = TRUE
+  )
+
+  script_copy_status <- if (
+    isTRUE(
+      methods_copy
+    ) &&
+    isTRUE(
+      check_copy
+    )
+  ) {
+    "COPIED"
+  } else {
+    "COPY_FAILED"
+  }
+}
 
 review_files <- c(
   LOG_FILE,
   file.path(
     DIRS$tables,
-    "00_stage5B_network_integrity_audit.csv"
-  ),
-  file.path(
-    DIRS$tables,
-    "01_stage5B_candidate_resolution.csv"
-  ),
-  file.path(
-    DIRS$tables,
-    "02_stage5B_program_definition_summary.csv"
-  ),
-  file.path(
-    DIRS$tables,
-    "04_stage5B_full_candidate_summary.csv"
-  ),
-  file.path(
-    DIRS$tables,
-    "05_stage5B_stage5_v2_reproduction_audit.csv"
-  ),
-  file.path(
-    DIRS$tables,
-    "07_stage5B_candidate_regulon_bootstrap_summary.csv"
-  ),
-  file.path(
-    DIRS$tables,
-    "08_stage5B_all_TF_matching_covariates.csv"
-  ),
-  file.path(
-    DIRS$tables,
-    "09_stage5B_candidate_matched_null_TF_pools.csv"
-  ),
-  file.path(
-    DIRS$tables,
-    "10_stage5B_precomputed_null_TF_effects.csv"
-  ),
-  file.path(
-    DIRS$tables,
-    "12_stage5B_random_matched_TF_null_summary.csv"
-  ),
-  file.path(
-    DIRS$tables,
-    "13_stage5B_final_candidate_robustness_rank.csv"
-  ),
-  workbook_path,
-  file.path(
-    DIRS$tables,
-    "15_stage5B_warnings_and_nonfatal_issues.csv"
-  ),
-  file.path(
-    DIRS$tables,
-    "16_stage5B_scientific_completion_checks.csv"
-  ),
-  file.path(
-    DIRS$tables,
-    "17_stage5B_run_status.csv"
+    c(
+      "00_stage7_upstream_status_audit.csv",
+      "01_stage7_candidate_TF_resolution.csv",
+      "01A_stage7_candidate_cross_stage_manifest.csv",
+      "02_stage7_feature_definitions.csv",
+      "03_stage7_sample_level_feature_matrix.csv",
+      "07_stage7_primary_LOPO_fold_performance.csv",
+      "08_stage7_primary_LOPO_sample_predictions.csv",
+      "11_stage7_feature_attribution_and_stability.csv",
+      "13_stage7_permutation_summary.csv",
+      "14_stage7_panel_and_lambda_sensitivity.csv",
+      "15_stage7_model_performance_summary.csv",
+      "16_stage7_figure_export_audit.csv",
+      "17_stage7_warnings_and_nonfatal_issues.csv",
+      "18_stage7_cross_stage_sample_ridge_key_results.xlsx",
+      "19_stage7_scientific_completion_checks.csv",
+      "20_stage7_run_status.csv"
+    )
   ),
   file.path(
     DIRS$methods,
-    "stage5B_OFFLINE_parameters_and_rationale.csv"
-  ),
-  file.path(
-    DIRS$methods,
-    "stage5B_OFFLINE_methods_and_claim_boundaries.txt"
-  ),
-  file.path(
-    DIRS$methods,
-    "sessionInfo.txt"
+    c(
+      "stage7_parameters_and_rationale.csv",
+      "stage7_limitations_and_claim_boundaries.csv",
+      "stage7_FINAL_v2_correction_audit.csv",
+      "stage7_methods_and_claim_boundaries.txt",
+      "sessionInfo.txt"
+    )
   ),
   file.path(
     OUT_DIR,
-    "README_stage5B_OFFLINE.txt"
+    "README_stage7.txt"
   ),
   list.files(
     DIRS$figures,
@@ -5201,21 +5572,23 @@ review_files <- c(
 
 review_files <- unique(
   review_files[
-    file.exists(review_files)
+    file.exists(
+      review_files
+    )
   ]
 )
 
-for (
-  file_i in review_files
-) {
+for (source_file in review_files) {
   target_file <- file.path(
     DIRS$check,
-    basename(file_i)
+    basename(
+      source_file
+    )
   )
 
   if (
     normalizePath(
-      file_i,
+      source_file,
       winslash = "/",
       mustWork = FALSE
     ) !=
@@ -5225,22 +5598,32 @@ for (
         mustWork = FALSE
       )
   ) {
-    file.copy(
-      file_i,
+    copied <- file.copy(
+      source_file,
       target_file,
       overwrite = TRUE
     )
+
+    if (!copied) {
+      stop(
+        "Failed to copy Stage 7 CHECK file: ",
+        source_file
+      )
+    }
   }
 }
 
 check_files <- list.files(
   DIRS$check,
-  full.names = TRUE
+  full.names = TRUE,
+  all.files = FALSE
 )
 
 check_manifest <- data.table::data.table(
   filename =
-    basename(check_files),
+    basename(
+      check_files
+    ),
   size_bytes =
     as.numeric(
       file.info(
@@ -5253,9 +5636,9 @@ check_manifest[
   ,
   sha256 := vapply(
     check_files,
-    function(file_i) {
+    function(file_path) {
       digest::digest(
-        file = file_i,
+        file = file_path,
         algo = "sha256",
         serialize = FALSE
       )
@@ -5283,32 +5666,52 @@ zip::zipr(
   zipfile = CHECK_ZIP,
   files = list.files(
     DIRS$check,
-    full.names = TRUE
+    full.names = TRUE,
+    all.files = FALSE
   ),
   root = DIRS$check
 )
 
+if (
+  !file.exists(CHECK_ZIP) ||
+  !is.finite(
+    as.numeric(
+      file.info(
+        CHECK_ZIP
+      )$size
+    )
+  ) ||
+  as.numeric(
+    file.info(
+      CHECK_ZIP
+    )$size
+  ) <= 0
+) {
+  stop(
+    "Stage 7 CHECK package was not created correctly."
+  )
+}
+
 log_msg(
-  "Stage 5B OFFLINE analysis finished."
+  "Stage 7 analysis completed."
 )
 
 log_msg(
-  "Overall status: ",
+  "Status: ",
   overall_status
 )
 
 log_msg(
-  "Top robustness candidate: ",
-  final_robustness$
-    tf_symbol[1L]
-)
-
-log_msg(
-  "Nfkb1 rank: ",
-  ifelse(
-    length(nfkb1_rank) == 1L,
-    nfkb1_rank,
-    "not ranked"
+  "Pairwise AUC: ",
+  round(
+    primary_result$
+      pairwise_auc,
+    4
+  ),
+  " | empirical P=",
+  signif(
+    pairwise_empirical_p,
+    4
   )
 )
 
@@ -5322,7 +5725,7 @@ cat(
 )
 
 cat(
-  "HFpEF Stage 5B OFFLINE robustness analysis completed\n"
+  "HFpEF Stage 7 completed\n"
 )
 
 cat(
@@ -5333,8 +5736,22 @@ cat(
 )
 
 cat(
-  "Output: ",
-  OUT_DIR,
+  "Pairwise leave-pair-out AUC: ",
+  round(
+    primary_result$
+      pairwise_auc,
+    4
+  ),
+  "\n",
+  sep = ""
+)
+
+cat(
+  "Balanced-label empirical P: ",
+  signif(
+    pairwise_empirical_p,
+    4
+  ),
   "\n",
   sep = ""
 )
@@ -5344,22 +5761,6 @@ cat(
   CHECK_ZIP,
   "\n",
   sep = ""
-)
-
-cat(
-  "Top robustness candidate: ",
-  final_robustness$
-    tf_symbol[1L],
-  "\n",
-  sep = ""
-)
-
-cat(
-  "Nfkb1 was not forced.\n"
-)
-
-cat(
-  "Upload the CHECK package before Stage 6.\n"
 )
 
 cat(

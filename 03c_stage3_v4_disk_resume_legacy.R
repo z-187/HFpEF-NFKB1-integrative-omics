@@ -4,43 +4,50 @@
 ##   Sys.setenv(HFPEF_PROJECT_DIR = "D:/HFpEF_project")
 ##   Raw public data are not bundled with this repository.
 ##
-## HFpEF Major Revision
-## Revision Benchmark and Ablation Module FINAL v3
+## HFpEF Reanalysis Project
+## Stage 3 FIXED v4
+## DISK-RESUME CONTINUATION AFTER THE FIRST SUPPLEMENT
 ##
-## Purpose
-##   This is NOT a new biological discovery stage and does not rerun
-##   Stages 1-8. It reads the frozen Stage 4-8 outputs and addresses the
-##   reviewer's requests for:
-##     1) comparison with simpler baselines;
-##     2) quantitative ranking metrics;
-##     3) leave-one-layer-out ablation;
-##     4) feature-importance reporting;
-##     5) external-validation alignment.
+## This is the correct continuation for the situation where R was
+## CLOSED after running:
+##   1) 3、第三阶段代码.R
+##   2) 3.1、第三阶段代码、第一次补充、后面出错.R
 ##
-## Clean-start behavior
-##   - FINAL_v3 deletes only its own same-version output directory and CHECK zip.
-##   - It never deletes or modifies Stage 1-8 outputs.
-##   - It recomputes the benchmark/ablation module from frozen Stage 4-8 tables.
+## The first supplement completed and saved:
+##   - the annotated/projected cardiac Seurat object;
+##   - the macrophage/monocyte subclustered Seurat object;
+##   - Tables 01-35, including pseudobulk and concordance results.
 ##
-## Analysis boundaries
-##   - External Stage 8 evidence is used only as an evaluation target.
-##   - Stage 8 evidence is never used to construct discovery rankings.
-##   - Candidate-TF comparisons are descriptive because only three TFs
-##     were prospectively frozen for Stage 6-8 validation.
-##   - Stage 7 AUC is an internal sample-separability metric, not a
-##     clinical diagnostic-performance estimate.
-##   - Communication comparisons evaluate ranking/generalization of the
-##     frozen axes; they do not prove physical signaling or causality.
+## It then stopped at the beginning of Section 17 because this line:
+##   )condition_palette <- c(
+## was syntactically invalid.
 ##
-## Save as
-##   <HFPEF_PROJECT_DIR>/
-##   HFpEF_Revision_Benchmark_Ablation_FINAL_v3.R
+## This script starts in a NEW R session and reloads all required
+## objects and tables from disk. It does NOT depend on objects remaining
+## in memory.
 ##
-## Run from a fresh R session. Do not paste line by line:
+## It DOES NOT repeat:
+##   - raw 10x extraction;
+##   - original QC;
+##   - scDblFinder;
+##   - normalization, PCA, neighbors, clustering, or UMAP;
+##   - major-cluster FindAllMarkers;
+##   - major-cell-type annotation;
+##   - cell-level program scoring;
+##   - pseudobulk edgeR or limma-voom;
+##   - Stage 2-Stage 3 concordance;
+##   - macrophage/monocyte subclustering or macrophage markers.
+##
+## It ONLY performs:
+##   - Section 17 figures and figure source data;
+##   - Section 18 workbook, methods, and parameters;
+##   - Section 19 completion checks and run status;
+##   - Section 20 compact CHECK package.
+##
+## Recommended run:
 ##   source(
-##     "<HFPEF_ASCII_PROJECT_LINK>/HFpEF_Revision_Benchmark_Ablation_FINAL_v3.R",
-##     encoding = "UTF-8",
-##     echo = FALSE
+##     "<HFPEF_PROJECT_DIR>/HFpEF_Stage3_GSE236585_v4_DISK_RESUME_AFTER_FIRST_SUPPLEMENT.R",
+##     encoding = "UTF-8"
 ##   )
 ############################################################
 
@@ -50,1478 +57,2491 @@ gc()
 options(stringsAsFactors = FALSE)
 options(warn = 1)
 options(encoding = "UTF-8")
-options(timeout = 7200)
-set.seed(20260715)
+options(future.globals.maxSize = 12 * 1024^3)
+set.seed(20260714)
 
 ############################################################
-## 0. Project paths and run settings
+## 0. Paths and downstream-only replacement boundary
 ############################################################
 
-DIRECT_PROJECT_DIR <- Sys.getenv("HFPEF_PROJECT_DIR", unset = "")
-ASCII_PROJECT_LINK <- Sys.getenv(
-  "HFPEF_ASCII_PROJECT_LINK",
-  unset = file.path(tempdir(), "HFPEF_STAGE8_ASCII_LINK")
-)
-
-project_dir_is_valid <- function(path) {
-  if (length(path) != 1L || is.na(path) || !nzchar(path)) return(FALSE)
-  dir.exists(path) &&
-    dir.exists(file.path(path, "04_stage4_GSE236585_macrophage_TF_regulon_FIXED_v1")) &&
-    dir.exists(file.path(path, "05_stage5_multiTF_virtual_perturbation_FIXED_v2")) &&
-    dir.exists(file.path(path, "05B_stage5B_OFFLINE_bootstrap_null_FIXED_v1")) &&
-    dir.exists(file.path(path, "06_stage6_TF_dependent_macrophage_vascular_communication_FINAL_v3")) &&
-    dir.exists(file.path(path, "07_stage7_cross_stage_sample_ridge_attribution_FINAL_v2")) &&
-    dir.exists(file.path(path, "08_stage8_multicohort_validation_FINAL_v6"))
-}
-
-detect_invoked_script <- function() {
-  candidates <- character()
-  frames <- sys.frames()
-  for (i in rev(seq_along(frames))) {
-    ofile <- tryCatch(frames[[i]]$ofile, error = function(e) NULL)
-    if (!is.null(ofile) && length(ofile) == 1L && nzchar(ofile)) {
-      candidates <- c(candidates, ofile)
-    }
-  }
-  args <- commandArgs(trailingOnly = FALSE)
-  candidates <- c(
-    candidates,
-    sub("^--file=", "", grep("^--file=", args, value = TRUE))
+PROJECT_DIR <- Sys.getenv("HFPEF_PROJECT_DIR", unset = "")
+if (!nzchar(PROJECT_DIR)) {
+  stop(
+    "HFPEF_PROJECT_DIR is not set. Define it as the local project root ",
+    "containing 0.GEO and the stage output folders before running this script."
   )
-  candidates <- unique(candidates[file.exists(candidates)])
-  if (length(candidates) == 0L) return(NA_character_)
-  gsub("\\\\", "/", path.expand(candidates[1L]))
 }
-
-EARLY_SCRIPT_FILE <- detect_invoked_script()
-EARLY_SCRIPT_DIR <- if (
-  length(EARLY_SCRIPT_FILE) == 1L && !is.na(EARLY_SCRIPT_FILE) && nzchar(EARLY_SCRIPT_FILE)
-) dirname(EARLY_SCRIPT_FILE) else NA_character_
-
-PROJECT_DIR <- local({
-  env_project <- Sys.getenv("HFPEF_PROJECT_DIR", unset = "")
-  candidates <- unique(c(
-    env_project,
-    ASCII_PROJECT_LINK,
-    DIRECT_PROJECT_DIR,
-    EARLY_SCRIPT_DIR,
-    getwd()
-  ))
-  candidates <- candidates[!is.na(candidates) & nzchar(candidates)]
-  valid <- vapply(candidates, project_dir_is_valid, logical(1))
-  if (!any(valid)) {
-    stop(
-      "HFpEF project root could not be located. Checked:\n",
-      paste(paste0("- ", candidates), collapse = "\n")
-    )
-  }
-  gsub("\\\\", "/", path.expand(candidates[which(valid)[1L]]))
-})
-
-STAGE4_DIR <- file.path(
-  PROJECT_DIR, "04_stage4_GSE236585_macrophage_TF_regulon_FIXED_v1"
-)
-STAGE5_DIR <- file.path(
-  PROJECT_DIR, "05_stage5_multiTF_virtual_perturbation_FIXED_v2"
-)
-STAGE5B_DIR <- file.path(
-  PROJECT_DIR, "05B_stage5B_OFFLINE_bootstrap_null_FIXED_v1"
-)
-STAGE6_DIR <- file.path(
-  PROJECT_DIR, "06_stage6_TF_dependent_macrophage_vascular_communication_FINAL_v3"
-)
-STAGE7_DIR <- file.path(
-  PROJECT_DIR, "07_stage7_cross_stage_sample_ridge_attribution_FINAL_v2"
-)
-STAGE8_DIR <- file.path(
-  PROJECT_DIR, "08_stage8_multicohort_validation_FINAL_v6"
-)
-
-OUT_NAME <- "REVISION_Benchmark_Ablation_FINAL_v3"
-OUT_DIR <- file.path(PROJECT_DIR, OUT_NAME)
-CHECK_ZIP <- file.path(PROJECT_DIR, paste0(OUT_NAME, "_CHECK.zip"))
-EXPECTED_SCRIPT_FILE <- file.path(
+PROJECT_DIR <- normalizePath(
   PROJECT_DIR,
-  "R",
-  "09_revision_benchmark_ablation_FINAL_v3.R"
+  winslash = "/",
+  mustWork = TRUE
 )
-ANALYSIS_SCHEMA <- "revision_benchmark_ablation_v3_clean_rebuild_20260715"
-FORCE_REBUILD <- TRUE
-FIGURE_DPI <- 600L
-TOPK_VALUES <- c(5L, 10L, 20L)
-SENTINEL_AXIS_KEY <- "NFKB1__TNF__TNFRSF1A__ENDOTHELIAL"
-EXTERNAL_SUPPORT_THRESHOLD <- 0.50
+STAGE_NAME <- "03_stage3_GSE236585_scRNA_projection_FIXED_v4_PATCH"
+OUT_DIR <- file.path(PROJECT_DIR, STAGE_NAME)
+CHECK_ZIP <- file.path(
+  PROJECT_DIR,
+  paste0(STAGE_NAME, "_CHECK.zip")
+)
 
-############################################################
-## 1. Packages, folders, and logging
-############################################################
+EXPECTED_SCRIPT_FILE <- file.path(PROJECT_DIR, "03c_stage3_v4_disk_resume_legacy.R")
 
-ensure_cran <- function(pkgs) {
-  missing <- pkgs[!vapply(pkgs, requireNamespace, logical(1), quietly = TRUE)]
-  if (length(missing) > 0L) {
-    install.packages(
-      missing,
-      repos = "https://cloud.r-project.org",
-      dependencies = TRUE
-    )
-  }
-  missing_after <- pkgs[!vapply(pkgs, requireNamespace, logical(1), quietly = TRUE)]
-  if (length(missing_after) > 0L) {
-    stop("Required package(s) unavailable: ", paste(missing_after, collapse = ", "))
-  }
-}
-
-ensure_cran(c(
-  "data.table", "ggplot2", "openxlsx", "scales", "digest", "zip"
-))
-
-suppressPackageStartupMessages({
-  library(data.table)
-  library(ggplot2)
-})
+SOURCE_STAGE3_V2_DIR <- file.path(
+  PROJECT_DIR,
+  "03_stage3_GSE236585_scRNA_projection_FIXED_v2"
+)
+SOURCE_CHECKPOINT <- file.path(
+  SOURCE_STAGE3_V2_DIR,
+  "02_objects",
+  "CHECKPOINT_GSE236585_post_QC_pre_doublet.rds"
+)
 
 DIRS <- list(
   logs = file.path(OUT_DIR, "00_logs"),
   tables = file.path(OUT_DIR, "01_tables"),
-  figures = file.path(OUT_DIR, "02_figures"),
-  source = file.path(OUT_DIR, "03_source_data"),
-  methods = file.path(OUT_DIR, "04_methods"),
-  check = file.path(OUT_DIR, "05_review_check")
+  objects = file.path(OUT_DIR, "02_objects"),
+  figures = file.path(OUT_DIR, "03_figures"),
+  source = file.path(OUT_DIR, "04_source_data"),
+  methods = file.path(OUT_DIR, "05_methods"),
+  check = file.path(OUT_DIR, "06_review_check")
 )
 
-if (FORCE_REBUILD && dir.exists(OUT_DIR)) {
-  unlink(OUT_DIR, recursive = TRUE, force = TRUE)
-}
-if (FORCE_REBUILD && file.exists(CHECK_ZIP)) {
-  unlink(CHECK_ZIP, force = TRUE)
-}
 for (d in c(OUT_DIR, unlist(DIRS, use.names = FALSE))) {
-  dir.create(d, recursive = TRUE, showWarnings = FALSE)
+  dir.create(
+    d,
+    recursive = TRUE,
+    showWarnings = FALSE
+  )
 }
 
-LOG_FILE <- file.path(DIRS$logs, "revision_benchmark_ablation.log")
+CARDIAC_RDS <- file.path(
+  DIRS$objects,
+  "GSE236585_stage3_annotated_projected_seurat.rds"
+)
+MACROPHAGE_RDS <- file.path(
+  DIRS$objects,
+  "GSE236585_macrophage_subclustered_seurat.rds"
+)
+
+## Only downstream products are rebuilt. Tables 01-35 and the two RDS
+## objects are never deleted or overwritten by this cleanup.
+REBUILD_DOWNSTREAM_ONLY <- TRUE
+
+downstream_cleanup_paths <- c(
+  DIRS$figures,
+  DIRS$source,
+  DIRS$methods,
+  DIRS$check,
+  file.path(
+    DIRS$tables,
+    "36_GSE236585_stage3_key_results.xlsx"
+  ),
+  file.path(
+    DIRS$tables,
+    "37_warnings_and_nonfatal_issues.csv"
+  ),
+  file.path(
+    DIRS$tables,
+    "38_scientific_completion_checks.csv"
+  ),
+  file.path(
+    DIRS$tables,
+    "39_stage3_run_status.csv"
+  ),
+  file.path(
+    DIRS$tables,
+    "40_disk_resume_provenance.csv"
+  ),
+  file.path(
+    OUT_DIR,
+    "README_stage3.txt"
+  ),
+  CHECK_ZIP
+)
+
+cleanup_audit <- data.table::data.table(
+  path = downstream_cleanup_paths,
+  existed_before = vapply(
+    downstream_cleanup_paths,
+    function(x) dir.exists(x) || file.exists(x),
+    logical(1)
+  ),
+  deleted = FALSE
+)
+
+if (REBUILD_DOWNSTREAM_ONLY) {
+  for (i in seq_len(nrow(cleanup_audit))) {
+    target <- cleanup_audit$path[i]
+
+    if (dir.exists(target)) {
+      existing_children <- list.files(
+        target,
+        full.names = TRUE,
+        all.files = TRUE,
+        no.. = TRUE
+      )
+      if (length(existing_children) > 0L) {
+        unlink(
+          existing_children,
+          recursive = TRUE,
+          force = TRUE
+        )
+      }
+      cleanup_audit$deleted[i] <- TRUE
+    } else if (file.exists(target)) {
+      unlink(
+        target,
+        recursive = FALSE,
+        force = TRUE
+      )
+      cleanup_audit$deleted[i] <- !file.exists(target)
+    } else {
+      cleanup_audit$deleted[i] <- TRUE
+    }
+  }
+}
+
+for (d in c(
+  DIRS$figures,
+  DIRS$source,
+  DIRS$methods,
+  DIRS$check
+)) {
+  dir.create(
+    d,
+    recursive = TRUE,
+    showWarnings = FALSE
+  )
+}
+
 START_TIME <- Sys.time()
+LOG_FILE <- file.path(
+  DIRS$logs,
+  "stage3_disk_resume_downstream.log"
+)
+UPSTREAM_LOG_FILE <- file.path(
+  DIRS$logs,
+  "stage3_GSE236585.log"
+)
+UPSTREAM_WARNING_FILE <- file.path(
+  DIRS$logs,
+  "stage3_warnings.log"
+)
+
+if (file.exists(LOG_FILE)) {
+  unlink(LOG_FILE, force = TRUE)
+}
 
 log_msg <- function(..., level = "INFO") {
+  txt <- paste0(..., collapse = "")
   line <- sprintf(
     "[%s] [%s] %s",
     format(Sys.time(), "%Y-%m-%d %H:%M:%S"),
     level,
-    paste0(..., collapse = "")
+    txt
   )
   cat(line, "\n")
-  cat(line, "\n", file = LOG_FILE, append = TRUE)
+  cat(
+    line,
+    "\n",
+    file = LOG_FILE,
+    append = TRUE
+  )
   invisible(line)
 }
 
-write_csv_safe <- function(x, path) {
-  dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
-  fwrite(as.data.table(x), path, na = "", compress = "auto")
-  invisible(path)
-}
+detect_script_file <- function() {
+  candidates <- character()
 
-safe_fread <- function(path) {
-  fread(path, encoding = "UTF-8", showProgress = FALSE)
-}
+  frames <- sys.frames()
+  for (i in rev(seq_along(frames))) {
+    ofile <- tryCatch(
+      frames[[i]]$ofile,
+      error = function(e) NULL
+    )
+    if (
+      !is.null(ofile) &&
+      length(ofile) == 1L &&
+      nzchar(ofile)
+    ) {
+      candidates <- c(candidates, ofile)
+    }
+  }
 
-SCRIPT_FILE <- local({
-  candidates <- unique(c(EARLY_SCRIPT_FILE, EXPECTED_SCRIPT_FILE))
-  candidates <- candidates[!is.na(candidates) & nzchar(candidates)]
+  args <- commandArgs(trailingOnly = FALSE)
+  file_arg <- grep("^--file=", args, value = TRUE)
+  if (length(file_arg) > 0L) {
+    candidates <- c(
+      candidates,
+      sub("^--file=", "", file_arg[1L])
+    )
+  }
+
+  candidates <- unique(candidates)
   candidates <- candidates[file.exists(candidates)]
+
   if (length(candidates) == 0L) {
-    NA_character_
-  } else {
-    gsub("\\\\", "/", path.expand(candidates[1L]))
+    return(NA_character_)
   }
-})
 
-log_msg("Revision benchmark/ablation started.")
-log_msg("PROJECT_DIR: ", PROJECT_DIR)
-log_msg("OUT_DIR: ", OUT_DIR)
-log_msg("Analysis schema: ", ANALYSIS_SCHEMA)
-log_msg("Clean rebuild enabled: ", FORCE_REBUILD)
-log_msg("Script: ", ifelse(is.na(SCRIPT_FILE), "NOT_DETECTED", SCRIPT_FILE))
+  normalizePath(
+    candidates[1L],
+    winslash = "/",
+    mustWork = TRUE
+  )
+}
 
-############################################################
-## 2. Input files and upstream validation
-############################################################
+SCRIPT_FILE <- detect_script_file()
+if (
+  (
+    length(SCRIPT_FILE) != 1L ||
+    is.na(SCRIPT_FILE) ||
+    !file.exists(SCRIPT_FILE)
+  ) &&
+  file.exists(EXPECTED_SCRIPT_FILE)
+) {
+  SCRIPT_FILE <- normalizePath(
+    EXPECTED_SCRIPT_FILE,
+    winslash = "/",
+    mustWork = TRUE
+  )
+}
 
-FILES <- list(
-  s4_status = file.path(STAGE4_DIR, "01_tables", "22_stage4_run_status.csv"),
-  s4_checks = file.path(STAGE4_DIR, "01_tables", "20_stage4_scientific_completion_checks.csv"),
-  s4_weighted = file.path(STAGE4_DIR, "01_tables", "09_stage4_weighted_regulon_activity_HFpEF_vs_Control.csv"),
-  s4_aucell = file.path(STAGE4_DIR, "01_tables", "10_stage4_AUCell_regulon_activity_HFpEF_vs_Control.csv"),
-  s4_expression = file.path(STAGE4_DIR, "01_tables", "11_stage4_TF_expression_HFpEF_vs_Control.csv"),
-  s4_priority = file.path(STAGE4_DIR, "01_tables", "12_stage4_candidate_TF_priority_score.csv"),
-  s4_lopo = file.path(STAGE4_DIR, "01_tables", "15_stage4_leave_one_pair_out_TF_robustness_summary.csv"),
-  s4_method_comparison = file.path(STAGE4_DIR, "01_tables", "18_stage4_TF_method_comparison_summary.csv"),
+ORIGINAL_ANALYSIS_START_TIME <- NA_character_
+if (file.exists(UPSTREAM_LOG_FILE)) {
+  upstream_log_lines <- readLines(
+    UPSTREAM_LOG_FILE,
+    warn = FALSE,
+    encoding = "UTF-8"
+  )
+  timestamp_match <- regmatches(
+    upstream_log_lines,
+    regexpr(
+      "\\[20[0-9]{2}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}\\]",
+      upstream_log_lines
+    )
+  )
+  timestamp_match <- timestamp_match[
+    nzchar(timestamp_match)
+  ]
+  if (length(timestamp_match) > 0L) {
+    ORIGINAL_ANALYSIS_START_TIME <- gsub(
+      "^\\[|\\]$",
+      "",
+      timestamp_match[1L]
+    )
+  }
+}
 
-  s5_status = file.path(STAGE5_DIR, "01_tables", "21_stage5_run_status.csv"),
-  s5_checks = file.path(STAGE5_DIR, "01_tables", "20_stage5_scientific_completion_checks.csv"),
-  s5_rank = file.path(STAGE5_DIR, "01_tables", "13_stage5_candidate_TF_rank_aggregation.csv"),
-  s5_sensitivity = file.path(STAGE5_DIR, "01_tables", "14_stage5_candidate_ranking_sensitivity_scenarios.csv"),
-  s5_mode = file.path(STAGE5_DIR, "01_tables", "16_stage5_normalization_vs_attenuation_results.csv"),
+if (is.na(ORIGINAL_ANALYSIS_START_TIME)) {
+  ORIGINAL_ANALYSIS_START_TIME <- "NOT_RECOVERED_FROM_LOG"
+}
 
-  s5b_status = file.path(STAGE5B_DIR, "01_tables", "17_stage5B_run_status.csv"),
-  s5b_checks = file.path(STAGE5B_DIR, "01_tables", "16_stage5B_scientific_completion_checks.csv"),
-  s5b_rank = file.path(STAGE5B_DIR, "01_tables", "13_stage5B_final_candidate_robustness_rank.csv"),
-
-  s6_status = file.path(STAGE6_DIR, "01_tables", "23_stage6_run_status.csv"),
-  s6_checks = file.path(STAGE6_DIR, "01_tables", "22_stage6_scientific_completion_checks.csv"),
-  s6_axes = file.path(STAGE6_DIR, "01_tables", "18_stage6_axis_ranking_stability_summary.csv"),
-  s6_candidate_summary = file.path(STAGE6_DIR, "01_tables", "19_stage6_candidate_TF_communication_summary.csv"),
-  s6_workbook = file.path(STAGE6_DIR, "01_tables", "20_stage6_TF_dependent_communication_key_results.xlsx"),
-
-  s7_status = file.path(STAGE7_DIR, "01_tables", "20_stage7_run_status.csv"),
-  s7_checks = file.path(STAGE7_DIR, "01_tables", "19_stage7_scientific_completion_checks.csv"),
-  s7_attribution = file.path(STAGE7_DIR, "01_tables", "11_stage7_feature_attribution_and_stability.csv"),
-  s7_performance = file.path(STAGE7_DIR, "01_tables", "15_stage7_model_performance_summary.csv"),
-
-  s8_status = file.path(STAGE8_DIR, "01_tables", "73_stage8_run_status.csv"),
-  s8_checks = file.path(STAGE8_DIR, "01_tables", "72_stage8_scientific_completion_checks.csv"),
-  s8_tf_evidence = file.path(STAGE8_DIR, "01_tables", "61_multicohort_TF_evidence.csv.gz"),
-  s8_tf_summary = file.path(STAGE8_DIR, "01_tables", "64_TF_integrated_summary.csv"),
-  s8_axis_evidence = file.path(STAGE8_DIR, "01_tables", "62_multicohort_axis_evidence.csv.gz"),
-  s8_axis_summary = file.path(STAGE8_DIR, "01_tables", "65_axis_integrated_summary.csv"),
-  s8_roles = file.path(STAGE8_DIR, "01_tables", "66_dataset_roles_and_claim_boundaries.csv")
+log_msg(
+  "Stage 3 disk-resume continuation started after R restart."
+)
+log_msg(
+  "Upstream Seurat objects and Tables 01-35 will be reloaded from disk."
+)
+log_msg(
+  "No upstream analysis will be repeated."
 )
 
-missing_files <- unlist(FILES, use.names = TRUE)[
-  !file.exists(unlist(FILES, use.names = FALSE))
+############################################################
+## 1. Package validation and utility functions
+############################################################
+
+required_packages <- c(
+  "Seurat",
+  "SeuratObject",
+  "data.table",
+  "Matrix",
+  "ggplot2",
+  "ggrepel",
+  "patchwork",
+  "pheatmap",
+  "openxlsx",
+  "scales",
+  "zip",
+  "digest"
+)
+
+missing_packages <- required_packages[
+  !vapply(
+    required_packages,
+    requireNamespace,
+    logical(1),
+    quietly = TRUE
+  )
 ]
-if (length(missing_files) > 0L) {
+
+if (length(missing_packages) > 0L) {
   stop(
-    "Missing required frozen input(s):\n",
-    paste(paste(names(missing_files), missing_files, sep = " = "), collapse = "\n")
+    "Required package(s) are missing: ",
+    paste(missing_packages, collapse = ", "),
+    ". Install them before running the disk-resume script."
   )
 }
 
-validate_stage <- function(status_file, checks_file, expected_status, stage_label) {
-  status <- safe_fread(status_file)
-  checks <- safe_fread(checks_file)
-  if (!"overall_status" %in% names(status) || nrow(status) == 0L) {
-    stop(stage_label, " status file lacks overall_status.")
-  }
-  if (!status$overall_status[1L] %in% expected_status) {
-    stop(stage_label, " is not ready: ", status$overall_status[1L])
-  }
-  if (!all(c("status") %in% names(checks)) || any(checks$status != "PASS")) {
-    stop(stage_label, " contains a non-PASS scientific check.")
-  }
-  data.table(
-    stage = stage_label,
-    overall_status = status$overall_status[1L],
-    scientific_checks = nrow(checks),
-    failed_checks = sum(checks$status != "PASS")
-  )
-}
-
-upstream_audit <- rbindlist(list(
-  validate_stage(
-    FILES$s4_status, FILES$s4_checks,
-    c("COMPLETED_STAGE4_READY_FOR_REVIEW", "COMPLETED_STAGE4_READY_WITH_METHOD_CAUTION"),
-    "Stage4"
-  ),
-  validate_stage(
-    FILES$s5_status, FILES$s5_checks,
-    "COMPLETED_STAGE5_READY_FOR_REVIEW",
-    "Stage5"
-  ),
-  validate_stage(
-    FILES$s5b_status, FILES$s5b_checks,
-    c("COMPLETED_STAGE5B_OFFLINE_READY_FOR_REVIEW", "COMPLETED_STAGE5B_READY_FOR_REVIEW"),
-    "Stage5B"
-  ),
-  validate_stage(
-    FILES$s6_status, FILES$s6_checks,
-    "COMPLETED_STAGE6_READY_FOR_REVIEW",
-    "Stage6"
-  ),
-  validate_stage(
-    FILES$s7_status, FILES$s7_checks,
-    "COMPLETED_STAGE7_READY_FOR_REVIEW",
-    "Stage7"
-  ),
-  validate_stage(
-    FILES$s8_status, FILES$s8_checks,
-    "COMPLETED_STAGE8_MULTICOHORT_READY_FOR_REVIEW",
-    "Stage8"
-  )
-))
-write_csv_safe(upstream_audit, file.path(DIRS$tables, "01_upstream_status_audit.csv"))
-
-############################################################
-## 3. General analysis utilities
-############################################################
-
-rank_desc <- function(x) {
-  frank(-as.numeric(x), ties.method = "average", na.last = "keep")
-}
-
-rank_asc <- function(x) {
-  frank(as.numeric(x), ties.method = "average", na.last = "keep")
-}
-
-rank_mean <- function(...) {
-  m <- do.call(cbind, lapply(list(...), as.numeric))
-  rowMeans(m, na.rm = TRUE)
-}
-
-safe_spearman <- function(x, y) {
-  ok <- is.finite(x) & is.finite(y)
-  if (sum(ok) < 3L || length(unique(x[ok])) < 2L || length(unique(y[ok])) < 2L) {
-    return(NA_real_)
-  }
-  suppressWarnings(cor(x[ok], y[ok], method = "spearman"))
-}
-
-canonical_gene_key <- function(x) {
-  y <- trimws(as.character(x))
-  for (cp in c(0x2010, 0x2011, 0x2012, 0x2013, 0x2014, 0x2212)) {
-    y <- gsub(intToUtf8(cp), "-", y, fixed = TRUE)
-  }
-  y <- gsub("[[:space:]]+", "", y)
-  toupper(y)
-}
-
-canonical_axis_key <- function(tf_symbol, ligand, receptor, receiver) {
-  paste(
-    canonical_gene_key(tf_symbol),
-    canonical_gene_key(ligand),
-    canonical_gene_key(receptor),
-    toupper(gsub("[^A-Za-z0-9]", "", as.character(receiver))),
-    sep = "__"
-  )
-}
-
-save_plot_all <- function(plot_object, stem, width, height) {
-  png_path <- file.path(DIRS$figures, paste0(stem, ".png"))
-  pdf_path <- file.path(DIRS$figures, paste0(stem, ".pdf"))
-  tif_path <- file.path(DIRS$figures, paste0(stem, ".tiff"))
-  ggsave(png_path, plot_object, width = width, height = height, dpi = FIGURE_DPI, bg = "white")
-  ggsave(pdf_path, plot_object, width = width, height = height, device = cairo_pdf, bg = "white")
-  ggsave(
-    tif_path, plot_object, width = width, height = height,
-    dpi = FIGURE_DPI, compression = "lzw", bg = "white"
-  )
-  data.table(
-    stem = stem,
-    png = png_path,
-    pdf = pdf_path,
-    tiff = tif_path,
-    png_valid = file.exists(png_path) && file.info(png_path)$size > 1000,
-    pdf_valid = file.exists(pdf_path) && file.info(pdf_path)$size > 1000,
-    tiff_valid = file.exists(tif_path) && file.info(tif_path)$size > 1000
-  )
-}
-
-theme_revision <- function(base_size = 9) {
-  theme_bw(base_size = base_size) +
-    theme(
-      panel.grid.minor = element_blank(),
-      panel.grid.major = element_line(linewidth = 0.25),
-      axis.text = element_text(colour = "black"),
-      axis.title = element_text(colour = "black"),
-      plot.title = element_text(face = "bold", hjust = 0),
-      strip.background = element_rect(fill = "grey95", colour = "black"),
-      strip.text = element_text(face = "bold"),
-      legend.title = element_text(face = "bold")
-    )
-}
-
-############################################################
-## 4. TF baseline comparison across the full Stage 4 universe
-############################################################
-
-s4_priority <- safe_fread(FILES$s4_priority)
-s4_weighted <- safe_fread(FILES$s4_weighted)
-s4_aucell <- safe_fread(FILES$s4_aucell)
-s4_expression <- safe_fread(FILES$s4_expression)
-s4_lopo <- safe_fread(FILES$s4_lopo)
-s4_method_comparison <- safe_fread(FILES$s4_method_comparison)
-
-required_s4_priority <- c(
-  "tf_symbol", "priority_rank", "priority_score", "Nfkb1_forced"
-)
-if (!all(required_s4_priority %in% names(s4_priority))) {
-  stop("Stage 4 priority table lacks required columns.")
-}
-
-all_tf <- merge(
-  s4_priority,
-  s4_expression[, .(
-    tf_symbol,
-    expression_effect = hfpef_minus_control,
-    expression_hedges_g = hedges_g_HFpEF_vs_Control,
-    expression_fdr = limma_padj
-  )],
-  by = "tf_symbol", all.x = TRUE, sort = FALSE,
-  suffixes = c("", "_from_expression")
-)
-all_tf <- merge(
-  all_tf,
-  s4_weighted[, .(
-    tf_symbol,
-    regulon_effect = hfpef_minus_control,
-    regulon_hedges_g = hedges_g_HFpEF_vs_Control,
-    regulon_fdr = limma_padj
-  )],
-  by = "tf_symbol", all.x = TRUE, sort = FALSE
-)
-all_tf <- merge(
-  all_tf,
-  s4_aucell[, .(
-    tf_symbol,
-    aucell_effect = hfpef_minus_control,
-    aucell_hedges_g = hedges_g_HFpEF_vs_Control,
-    aucell_fdr = limma_padj
-  )],
-  by = "tf_symbol", all.x = TRUE, sort = FALSE,
-  suffixes = c("", "_from_aucell")
-)
-all_tf <- merge(
-  all_tf,
-  s4_lopo,
-  by = "tf_symbol", all.x = TRUE, sort = FALSE,
-  suffixes = c("", "_from_lopo")
-)
-
-all_tf[, rank_TF_expression_only := rank_desc(abs(expression_hedges_g))]
-all_tf[, rank_weighted_regulon_only := rank_desc(abs(regulon_hedges_g))]
-all_tf[, rank_AUCell_only := rank_desc(abs(aucell_hedges_g))]
-all_tf[, rank_regulon_plus_LOPO := rank_mean(
-  rank_desc(abs(regulon_hedges_g)),
-  rank_desc(sign_stability),
-  rank_asc(median_abs_effect_rank)
-)]
-all_tf[, rank_stage4_multifeature := as.numeric(priority_rank)]
-all_tf[, expression_to_integrated_rank_gain :=
-         rank_TF_expression_only - rank_stage4_multifeature]
-all_tf[, regulon_to_integrated_rank_gain :=
-         rank_weighted_regulon_only - rank_stage4_multifeature]
-all_tf[, selected_for_virtual_perturbation :=
-         tf_symbol %in% c("Bhlhe40", "Runx1", "Spi1", "Rel", "Nfkb1", "Rela")]
-all_tf[, frozen_for_stage6_8 := tf_symbol %in% c("Bhlhe40", "Nfkb1", "Rela")]
-setorder(all_tf, rank_stage4_multifeature)
-write_csv_safe(all_tf, file.path(DIRS$tables, "02_TF_baseline_ranks_all174.csv"))
-write_csv_safe(
-  s4_method_comparison,
-  file.path(DIRS$tables, "02A_stage4_existing_method_correlations.csv")
-)
-
-selected_tf_baseline <- all_tf[selected_for_virtual_perturbation == TRUE, .(
-  tf_symbol,
-  rank_TF_expression_only,
-  rank_weighted_regulon_only,
-  rank_AUCell_only,
-  rank_regulon_plus_LOPO,
-  rank_stage4_multifeature,
-  expression_to_integrated_rank_gain,
-  regulon_to_integrated_rank_gain,
-  expression_effect,
-  expression_hedges_g,
-  regulon_effect,
-  regulon_hedges_g,
-  priority_score,
-  Nfkb1_forced
-)]
-write_csv_safe(
-  selected_tf_baseline,
-  file.path(DIRS$tables, "03_selected_TF_baseline_rank_comparison.csv")
-)
-
-############################################################
-## 5. Candidate-TF method comparison and layer ablation
-############################################################
-
-s5_rank <- safe_fread(FILES$s5_rank)
-s5_sensitivity <- safe_fread(FILES$s5_sensitivity)
-s5_mode <- safe_fread(FILES$s5_mode)
-s5b_rank <- safe_fread(FILES$s5b_rank)
-s6_candidate <- safe_fread(FILES$s6_candidate_summary)
-s8_tf_summary <- safe_fread(FILES$s8_tf_summary)
-s8_tf_evidence <- safe_fread(FILES$s8_tf_evidence)
-
-candidate_tfs <- s8_tf_summary[order(integrated_rank), tf_symbol]
-if (length(candidate_tfs) != 3L || !setequal(candidate_tfs, c("Bhlhe40", "Nfkb1", "Rela"))) {
-  stop(
-    "Expected exactly the prospectively frozen Stage 6-8 candidates: ",
-    "Bhlhe40, Nfkb1, and Rela."
-  )
-}
-
-candidate_rank <- all_tf[tf_symbol %in% candidate_tfs, .(
-  tf_symbol,
-  expression_hedges_g,
-  regulon_hedges_g,
-  stage4_priority_rank_global = rank_stage4_multifeature,
-  Nfkb1_forced
-)]
-candidate_rank <- merge(
-  candidate_rank,
-  s5_rank[tf_symbol %in% candidate_tfs],
-  by = "tf_symbol", all.x = TRUE, sort = FALSE
-)
-candidate_rank <- merge(
-  candidate_rank,
-  s5b_rank[tf_symbol %in% candidate_tfs, .(
-    tf_symbol,
-    positive_recovery_probability,
-    top1_frequency,
-    top3_frequency,
-    candidate_percentile,
-    empirical_one_sided_p,
-    final_robustness_rank,
-    final_robustness_score,
-    Nfkb1_forced_stage5B = Nfkb1_forced
-  )],
-  by = "tf_symbol", all.x = TRUE, sort = FALSE
-)
-candidate_rank <- merge(
-  candidate_rank,
-  s6_candidate[, .(
-    tf_symbol,
-    Stage5B_rank,
-    total_axes,
-    strict_cross_stage_axes,
-    best_axis_rank,
-    median_AUPR_corrected,
-    median_NicheNet_pearson
-  )],
-  by = "tf_symbol", all.x = TRUE, sort = FALSE
-)
-candidate_rank <- merge(
-  candidate_rank,
-  s8_tf_summary[, .(
-    tf_symbol,
-    external_evidence_rows = evidence_rows,
-    external_datasets = datasets,
-    external_compartments = compartments,
-    external_supported_rows = supported_rows,
-    external_support_fraction = support_fraction,
-    external_median_abs_hedges_g = median_abs_hedges_g,
-    external_formal_fdr_rows = formal_fdr_rows,
-    external_integrated_rank = integrated_rank
-  )],
-  by = "tf_symbol", all.x = TRUE, sort = FALSE
-)
-
-## Simple baselines and discovery-only integrated rankings.
-candidate_rank[, rank_expression_only := rank_desc(abs(expression_hedges_g))]
-candidate_rank[, rank_regulon_only := rank_desc(abs(regulon_hedges_g))]
-candidate_rank[, rank_stage4_integrated := rank_asc(stage4_priority_rank_global)]
-
-## Perturbation-only score excludes Stage 4 prior and all Stage 6/8 evidence.
-candidate_rank[, rank_perturbation_only := rank_asc(rank_mean(
-  rank_desc(stage2_primary_median_gap_reduction),
-  rank_desc(stage2_primary_positive_fraction),
-  rank_desc(biological_sample_improvement_fraction),
-  rank_desc(inflammation_median_gap_reduction),
-  rank_desc(specificity_score)
-))]
-
-## Bootstrap/null robustness is still discovery-only and was frozen before Stage 8.
-candidate_rank[, rank_bootstrap_robustness := rank_asc(final_robustness_rank)]
-
-## Communication-only score uses Stage 6 communication evidence and no Stage 8 result.
-candidate_rank[, communication_mean_rank := rank_mean(
-  rank_desc(strict_cross_stage_axes),
-  rank_asc(best_axis_rank),
-  rank_desc(total_axes),
-  rank_desc(median_AUPR_corrected),
-  rank_desc(median_NicheNet_pearson)
-)]
-candidate_rank[, rank_communication_only := rank_asc(communication_mean_rank)]
-
-## Equal-weight cross-layer rank. External Stage 8 evidence is not included.
-candidate_rank[, full_cross_layer_mean_rank := rank_mean(
-  rank_stage4_integrated,
-  rank_bootstrap_robustness,
-  rank_communication_only
-)]
-candidate_rank[, rank_full_cross_layer := rank_asc(full_cross_layer_mean_rank)]
-setorder(candidate_rank, rank_full_cross_layer)
-write_csv_safe(
-  candidate_rank,
-  file.path(DIRS$tables, "04_candidate_TF_method_ranks.csv")
-)
-
-ablation_definitions <- list(
-  Full_cross_layer = c(
-    "rank_stage4_integrated",
-    "rank_bootstrap_robustness",
-    "rank_communication_only"
-  ),
-  Without_regulon_layer = c(
-    "rank_bootstrap_robustness",
-    "rank_communication_only"
-  ),
-  Without_perturbation_layer = c(
-    "rank_stage4_integrated",
-    "rank_communication_only"
-  ),
-  Without_communication_layer = c(
-    "rank_stage4_integrated",
-    "rank_bootstrap_robustness"
-  ),
-  TF_expression_only = "rank_expression_only",
-  Regulon_only = "rank_regulon_only",
-  Perturbation_only = "rank_perturbation_only",
-  Communication_only = "rank_communication_only"
-)
-
-ablation_rows <- lapply(names(ablation_definitions), function(scenario_name) {
-  cols <- ablation_definitions[[scenario_name]]
-  dt <- candidate_rank[, c("tf_symbol", cols), with = FALSE]
-  rank_matrix <- as.matrix(dt[, ..cols])
-  dt[, scenario_score := rowMeans(rank_matrix, na.rm = TRUE)]
-  dt[, scenario_rank := rank_asc(scenario_score)]
-  dt[, `:=`(
-    scenario = scenario_name,
-    layers_used = paste(cols, collapse = ";")
-  )]
-  dt[, .(tf_symbol, scenario, layers_used, scenario_score, scenario_rank)]
+suppressPackageStartupMessages({
+  library(Seurat)
+  library(SeuratObject)
+  library(data.table)
+  library(Matrix)
+  library(ggplot2)
+  library(ggrepel)
+  library(patchwork)
+  library(pheatmap)
+  library(openxlsx)
 })
-ablation <- rbindlist(ablation_rows, use.names = TRUE, fill = TRUE)
-write_csv_safe(ablation, file.path(DIRS$tables, "05_candidate_TF_ablation_scenarios.csv"))
 
-ablation_stability <- ablation[, .(
-  scenarios = uniqueN(scenario),
-  median_rank = median(scenario_rank),
-  best_rank = min(scenario_rank),
-  worst_rank = max(scenario_rank),
-  rank_range = max(scenario_rank) - min(scenario_rank),
-  top1_frequency = mean(scenario_rank == 1),
-  top2_frequency = mean(scenario_rank <= 2)
-), by = tf_symbol][order(median_rank, -top1_frequency)]
-write_csv_safe(
-  ablation_stability,
-  file.path(DIRS$tables, "06_candidate_TF_ablation_stability.csv")
-)
-
-candidate_method_long <- melt(
-  candidate_rank,
-  id.vars = c("tf_symbol", "external_integrated_rank"),
-  measure.vars = c(
-    "rank_expression_only",
-    "rank_regulon_only",
-    "rank_stage4_integrated",
-    "rank_perturbation_only",
-    "rank_bootstrap_robustness",
-    "rank_communication_only",
-    "rank_full_cross_layer"
-  ),
-  variable.name = "method",
-  value.name = "discovery_rank"
-)
-candidate_method_long[, method := fcase(
-  method == "rank_expression_only", "TF expression only",
-  method == "rank_regulon_only", "Regulon activity only",
-  method == "rank_stage4_integrated", "Stage 4 multifeature",
-  method == "rank_perturbation_only", "Perturbation only",
-  method == "rank_bootstrap_robustness", "Bootstrap perturbation",
-  method == "rank_communication_only", "Communication only",
-  method == "rank_full_cross_layer", "Full cross-layer",
-  default = as.character(method)
-)]
-
-candidate_alignment <- candidate_method_long[, .(
-  candidates = .N,
-  spearman_vs_external_rank = safe_spearman(discovery_rank, external_integrated_rank),
-  mean_absolute_rank_error = mean(abs(discovery_rank - external_integrated_rank)),
-  top1_candidate = tf_symbol[which.min(discovery_rank)][1L],
-  external_top1_candidate = tf_symbol[which.min(external_integrated_rank)][1L],
-  top1_match = tf_symbol[which.min(discovery_rank)][1L] ==
-    tf_symbol[which.min(external_integrated_rank)][1L]
-), by = method]
-write_csv_safe(
-  candidate_method_long,
-  file.path(DIRS$tables, "07_candidate_TF_method_long.csv")
-)
-write_csv_safe(
-  candidate_alignment,
-  file.path(DIRS$tables, "08_candidate_TF_external_alignment.csv")
-)
-
-## Preserve the original Stage 5 sensitivity and mode checks as quantitative context.
-write_csv_safe(
-  s5_sensitivity,
-  file.path(DIRS$tables, "08A_stage5_original_ranking_sensitivity.csv")
-)
-write_csv_safe(
-  s5_mode,
-  file.path(DIRS$tables, "08B_stage5_normalization_attenuation_sensitivity.csv")
-)
-
-############################################################
-## 6. Communication-axis method comparison
-############################################################
-
-log_msg("Reading Stage 6 Top_axes workbook for simple communication baselines.")
-top_axes <- as.data.table(openxlsx::read.xlsx(FILES$s6_workbook, sheet = "Top_axes"))
-required_axis_columns <- c(
-  "tf_symbol", "nichenet_ligand", "receptor", "receiver", "axis_id",
-  "final_axis_rank", "rank_sender_expression", "rank_receptor_expression",
-  "rank_NicheNet_AUPR", "rank_NicheNet_pearson", "rank_cross_stage_support"
-)
-if (!all(required_axis_columns %in% names(top_axes))) {
-  stop(
-    "Stage 6 Top_axes sheet lacks required columns: ",
-    paste(setdiff(required_axis_columns, names(top_axes)), collapse = ", ")
-  )
-}
-
-for (col in setdiff(required_axis_columns, c(
-  "tf_symbol", "nichenet_ligand", "receptor", "receiver", "axis_id"
-))) {
-  set(top_axes, j = col, value = as.numeric(top_axes[[col]]))
-}
-top_axes[, axis_key := canonical_axis_key(
-  tf_symbol, nichenet_ligand, receptor, receiver
-)]
-
-## One record per biological axis. The Stage 6 workbook can contain repeated
-## ligand-receptor records from target-level support rows; the minimum/median
-## ranks below preserve the locked axis-level prioritization.
-axis_discovery <- top_axes[, .(
-  axis_id = axis_id[1L],
-  tf_symbol = tf_symbol[1L],
-  nichenet_ligand = nichenet_ligand[1L],
-  receptor = receptor[1L],
-  receiver = receiver[1L],
-  full_integration_original_rank = min(final_axis_rank, na.rm = TRUE),
-  ligand_expression_original_rank = min(rank_sender_expression, na.rm = TRUE),
-  receptor_expression_original_rank = min(rank_receptor_expression, na.rm = TRUE),
-  nichenet_original_rank = median(
-    rowMeans(cbind(rank_NicheNet_AUPR, rank_NicheNet_pearson), na.rm = TRUE),
-    na.rm = TRUE
-  ),
-  cross_stage_support_original_rank = min(rank_cross_stage_support, na.rm = TRUE)
-), by = axis_key]
-
-s8_axis_summary <- safe_fread(FILES$s8_axis_summary)
-s8_axis_evidence <- safe_fread(FILES$s8_axis_evidence)
-if (anyDuplicated(s8_axis_summary$axis_key)) {
-  stop("Stage 8 axis summary contains duplicated axis_key values.")
-}
-
-axis_eval <- merge(
-  axis_discovery,
-  s8_axis_summary[, .(
-    axis_key,
-    external_axis_id = axis_id,
-    external_evidence_rows = evidence_rows,
-    external_datasets = datasets,
-    external_dataset_list = dataset_list,
-    external_supported_rows = supported_rows,
-    external_support_fraction = support_fraction,
-    external_median_abs_hedges_g = median_abs_hedges_g,
-    external_formal_fdr_rows = formal_fdr_rows,
-    external_integrated_rank = integrated_rank
-  )],
-  by = "axis_key", all = FALSE, sort = FALSE
-)
-
-if (nrow(axis_eval) < 10L) {
-  stop("Fewer than 10 frozen Stage 6 axes were recovered in Stage 8 validation.")
-}
-
-## Re-rank all methods only within the same frozen externally evaluated axis set.
-axis_eval[, rank_full_integration := rank_asc(full_integration_original_rank)]
-axis_eval[, rank_ligand_expression_only := rank_asc(ligand_expression_original_rank)]
-axis_eval[, rank_receptor_expression_only := rank_asc(receptor_expression_original_rank)]
-axis_eval[, rank_LR_expression_only := rank_asc(rank_mean(
-  rank_ligand_expression_only,
-  rank_receptor_expression_only
-))]
-axis_eval[, rank_NicheNet_only := rank_asc(nichenet_original_rank)]
-axis_eval[, rank_cross_stage_support_only := rank_asc(cross_stage_support_original_rank)]
-setorder(axis_eval, external_integrated_rank)
-write_csv_safe(axis_eval, file.path(DIRS$tables, "09_axis_method_ranks.csv"))
-
-axis_method_long <- melt(
-  axis_eval,
-  id.vars = c(
-    "axis_key", "tf_symbol", "nichenet_ligand", "receptor", "receiver",
-    "external_integrated_rank", "external_support_fraction",
-    "external_median_abs_hedges_g", "external_formal_fdr_rows"
-  ),
-  measure.vars = c(
-    "rank_ligand_expression_only",
-    "rank_receptor_expression_only",
-    "rank_LR_expression_only",
-    "rank_NicheNet_only",
-    "rank_cross_stage_support_only",
-    "rank_full_integration"
-  ),
-  variable.name = "method",
-  value.name = "discovery_rank"
-)
-axis_method_long[, method := fcase(
-  method == "rank_ligand_expression_only", "Ligand expression only",
-  method == "rank_receptor_expression_only", "Receptor expression only",
-  method == "rank_LR_expression_only", "Ligand-receptor expression",
-  method == "rank_NicheNet_only", "NicheNet only",
-  method == "rank_cross_stage_support_only", "Cross-stage support only",
-  method == "rank_full_integration", "Full integration",
-  default = as.character(method)
-)]
-
-axis_alignment <- axis_method_long[, .(
-  axes = .N,
-  spearman_vs_external_rank = safe_spearman(discovery_rank, external_integrated_rank),
-  mean_absolute_rank_error = mean(abs(discovery_rank - external_integrated_rank)),
-  median_external_support_fraction = median(external_support_fraction),
-  externally_supported_axes = sum(
-    external_support_fraction >= EXTERNAL_SUPPORT_THRESHOLD,
-    na.rm = TRUE
-  ),
-  top1_axis = axis_key[which.min(discovery_rank)][1L],
-  external_top1_axis = axis_key[which.min(external_integrated_rank)][1L],
-  top1_match = axis_key[which.min(discovery_rank)][1L] ==
-    axis_key[which.min(external_integrated_rank)][1L]
-), by = method]
-write_csv_safe(
-  axis_method_long,
-  file.path(DIRS$tables, "10_axis_method_long.csv.gz")
-)
-write_csv_safe(
-  axis_alignment,
-  file.path(DIRS$tables, "11_axis_external_alignment.csv")
-)
-
-topk_external <- rbindlist(lapply(unique(axis_method_long$method), function(method_i) {
-  dt <- axis_method_long[method == method_i][order(discovery_rank)]
-  rbindlist(lapply(TOPK_VALUES, function(k) {
-    k_use <- min(k, nrow(dt))
-    sub <- head(dt, k_use)
-    data.table(
-      method = method_i,
-      top_k = k_use,
-      mean_external_support_fraction = mean(sub$external_support_fraction, na.rm = TRUE),
-      median_external_support_fraction = median(sub$external_support_fraction, na.rm = TRUE),
-      externally_supported_axes = sum(
-        sub$external_support_fraction >= EXTERNAL_SUPPORT_THRESHOLD,
-        na.rm = TRUE
+write_csv_safe <- function(
+  x,
+  path,
+  compress = FALSE
+) {
+  if (
+    is.null(x) ||
+    ncol(x) == 0L
+  ) {
+    data.table::fwrite(
+      data.table::data.table(
+        note = "No records generated."
       ),
-      supported_axis_fraction = mean(
-        sub$external_support_fraction >= EXTERNAL_SUPPORT_THRESHOLD,
-        na.rm = TRUE
-      ),
-      mean_external_abs_hedges_g = mean(sub$external_median_abs_hedges_g, na.rm = TRUE),
-      formal_FDR_supported_axes = sum(sub$external_formal_fdr_rows > 0L, na.rm = TRUE)
+      path
     )
-  }))
-}))
-write_csv_safe(
-  topk_external,
-  file.path(DIRS$tables, "12_axis_topk_external_performance.csv")
-)
-
-sentinel_ranks <- axis_method_long[axis_key == SENTINEL_AXIS_KEY, .(
-  axis_key,
-  method,
-  discovery_rank,
-  external_integrated_rank,
-  external_support_fraction,
-  external_median_abs_hedges_g,
-  external_formal_fdr_rows
-)]
-if (nrow(sentinel_ranks) != uniqueN(axis_method_long$method)) {
-  stop("The prespecified TNF-TNFRSF1A-Endothelial sentinel axis is incomplete.")
+  } else {
+    data.table::fwrite(
+      x,
+      path,
+      compress = if (compress) "gzip" else "none"
+    )
+  }
 }
-write_csv_safe(
-  sentinel_ranks,
-  file.path(DIRS$tables, "13_sentinel_axis_rank_comparison.csv")
-)
 
-############################################################
-## 7. Stage 7 quantitative metrics and feature importance
-############################################################
-
-stage7_performance <- safe_fread(FILES$s7_performance)
-stage7_attribution <- safe_fread(FILES$s7_attribution)
-stage7_attribution[, contribution_fraction :=
-                     mean_absolute_logit_contribution /
-                     sum(mean_absolute_logit_contribution, na.rm = TRUE)]
-stage7_attribution[, contribution_percent := 100 * contribution_fraction]
-setorder(stage7_attribution, importance_rank)
-
-write_csv_safe(
-  stage7_performance,
-  file.path(DIRS$tables, "14_stage7_quantitative_metrics.csv")
-)
-write_csv_safe(
-  stage7_attribution,
-  file.path(DIRS$tables, "15_stage7_feature_importance.csv")
-)
-
-############################################################
-## 8. Revision figures
-############################################################
-
-figure_audit <- list()
-
-method_order_tf <- c(
-  "TF expression only",
-  "Regulon activity only",
-  "Stage 4 multifeature",
-  "Perturbation only",
-  "Bootstrap perturbation",
-  "Communication only",
-  "Full cross-layer",
-  "External Stage 8"
-)
-
-tf_heat <- rbindlist(list(
-  candidate_method_long[, .(
-    tf_symbol,
-    method,
-    rank = discovery_rank
-  )],
-  candidate_rank[, .(
-    tf_symbol,
-    method = "External Stage 8",
-    rank = external_integrated_rank
-  )]
-))
-tf_heat[, method := factor(method, levels = method_order_tf)]
-tf_heat[, tf_symbol := factor(tf_symbol, levels = c("Bhlhe40", "Nfkb1", "Rela"))]
-
-p_tf_heat <- ggplot(tf_heat, aes(x = method, y = tf_symbol, fill = rank)) +
-  geom_tile(colour = "white", linewidth = 0.5) +
-  geom_text(aes(label = sprintf("%.1f", rank)), size = 3) +
-  scale_fill_gradient(low = "white", high = "grey35", trans = "reverse") +
-  labs(
-    title = "Candidate TF ranks across simple, integrated, and external analyses",
-    x = NULL,
-    y = NULL,
-    fill = "Rank\n(lower is better)"
-  ) +
-  theme_revision(9) +
-  theme(
-    axis.text.x = element_text(angle = 45, hjust = 1),
-    panel.grid = element_blank()
+sanitize_sheet_name <- function(x) {
+  x <- gsub(
+    "[\\[\\]:*?/\\\\]",
+    "_",
+    x
   )
-figure_audit[[length(figure_audit) + 1L]] <- save_plot_all(
-  p_tf_heat, "FigR1A_candidate_TF_method_rank_heatmap", 8.2, 3.3
-)
-write_csv_safe(tf_heat, file.path(DIRS$source, "FigR1A_source_data.csv"))
+  substr(x, 1L, 31L)
+}
 
-ablation_plot <- copy(ablation)
-ablation_plot[, scenario := factor(
-  scenario,
-  levels = c(
-    "Full_cross_layer",
-    "Without_regulon_layer",
-    "Without_perturbation_layer",
-    "Without_communication_layer",
-    "TF_expression_only",
-    "Regulon_only",
-    "Perturbation_only",
-    "Communication_only"
+write_sheet_safe <- function(wb, sheet, x) {
+  sheet <- sanitize_sheet_name(sheet)
+  openxlsx::addWorksheet(wb, sheet)
+
+  if (
+    is.null(x) ||
+    nrow(x) == 0L ||
+    ncol(x) == 0L
+  ) {
+    openxlsx::writeData(
+      wb,
+      sheet,
+      data.frame(
+        note = "No records generated."
+      )
+    )
+    return(invisible(NULL))
+  }
+
+  y <- as.data.frame(
+    x,
+    stringsAsFactors = FALSE
   )
-)]
-p_ablation <- ggplot(
-  ablation_plot,
-  aes(x = scenario, y = scenario_rank, group = tf_symbol, linetype = tf_symbol)
-) +
-  geom_line(linewidth = 0.7) +
-  geom_point(size = 2.1) +
-  scale_y_reverse(breaks = 1:3) +
-  labs(
-    title = "Leave-one-layer-out candidate-rank sensitivity",
-    x = NULL,
-    y = "Candidate rank",
-    linetype = "TF"
-  ) +
-  theme_revision(9) +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))
-figure_audit[[length(figure_audit) + 1L]] <- save_plot_all(
-  p_ablation, "FigR1B_candidate_TF_ablation_stability", 8.2, 3.8
-)
-write_csv_safe(ablation_plot, file.path(DIRS$source, "FigR1B_source_data.csv"))
 
-candidate_alignment_plot <- copy(candidate_alignment)
-candidate_alignment_plot[, method := factor(method, levels = method_order_tf)]
-p_tf_align <- ggplot(
-  candidate_alignment_plot,
-  aes(x = method, y = spearman_vs_external_rank)
-) +
-  geom_col(width = 0.72) +
-  geom_hline(yintercept = 0, linewidth = 0.4) +
-  coord_cartesian(ylim = c(-1, 1)) +
-  labs(
-    title = "Discovery-rank alignment with Stage 8 external TF evidence",
-    x = NULL,
-    y = "Spearman rank correlation"
-  ) +
-  theme_revision(9) +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))
-figure_audit[[length(figure_audit) + 1L]] <- save_plot_all(
-  p_tf_align, "FigR1C_candidate_TF_external_alignment", 7.2, 3.8
-)
-write_csv_safe(
-  candidate_alignment_plot,
-  file.path(DIRS$source, "FigR1C_source_data.csv")
-)
-
-method_order_axis <- c(
-  "Ligand expression only",
-  "Receptor expression only",
-  "Ligand-receptor expression",
-  "NicheNet only",
-  "Cross-stage support only",
-  "Full integration"
-)
-topk_plot <- copy(topk_external)
-topk_plot[, method := factor(method, levels = method_order_axis)]
-p_topk <- ggplot(
-  topk_plot,
-  aes(
-    x = top_k,
-    y = supported_axis_fraction,
-    group = method,
-    linetype = method
+  char_cols <- vapply(
+    y,
+    is.character,
+    logical(1)
   )
-) +
-  geom_line(linewidth = 0.75) +
-  geom_point(size = 2) +
-  scale_x_continuous(breaks = TOPK_VALUES) +
-  scale_y_continuous(labels = scales::percent_format(accuracy = 1), limits = c(0, 1)) +
-  labs(
-    title = "External support recovered by simple and integrated axis rankings",
-    x = "Top-ranked frozen axes",
-    y = paste0("Axes with external support fraction >= ", sprintf("%.2f", EXTERNAL_SUPPORT_THRESHOLD)),
-    linetype = "Ranking method"
-  ) +
-  theme_revision(9)
-figure_audit[[length(figure_audit) + 1L]] <- save_plot_all(
-  p_topk, "FigR1D_axis_topk_external_performance", 7.2, 4.2
-)
-write_csv_safe(topk_plot, file.path(DIRS$source, "FigR1D_source_data.csv"))
+  if (any(char_cols)) {
+    y[char_cols] <- lapply(
+      y[char_cols],
+      function(z) substr(z, 1L, 30000L)
+    )
+  }
 
-feature_plot <- copy(stage7_attribution)
-feature_plot[, feature_label := fcase(
-  feature == "COMM_NFkB_axis_burden", "NF-kB communication-axis burden",
-  feature == "PROGRAM_DrugOpposed_Top150", "Drug-opposed Top150 program",
-  feature == "TF_Nfkb1_activity", "NFKB1 regulon activity",
-  feature == "TF_Bhlhe40_activity", "BHLHE40 regulon activity",
-  feature == "TF_Rela_activity", "RELA regulon activity",
-  default = as.character(feature)
-)]
-feature_plot[, feature_label := factor(
-  feature_label,
-  levels = rev(feature_label[order(importance_rank)])
-)]
-p_feature <- ggplot(
-  feature_plot,
-  aes(x = contribution_percent, y = feature_label)
-) +
-  geom_col(width = 0.7) +
-  scale_x_continuous(labels = function(x) paste0(round(x), "%")) +
-  labs(
-    title = "Stage 7 sample-level feature contribution",
-    x = "Share of mean absolute logit contribution",
-    y = NULL
-  ) +
-  theme_revision(9)
-figure_audit[[length(figure_audit) + 1L]] <- save_plot_all(
-  p_feature, "FigR1E_stage7_feature_importance", 6.6, 3.8
-)
-write_csv_safe(feature_plot, file.path(DIRS$source, "FigR1E_source_data.csv"))
+  openxlsx::writeData(wb, sheet, y)
+  openxlsx::freezePane(
+    wb,
+    sheet,
+    firstRow = TRUE
+  )
+  openxlsx::setColWidths(
+    wb,
+    sheet,
+    cols = seq_len(min(ncol(y), 35L)),
+    widths = "auto"
+  )
+  invisible(NULL)
+}
 
-sentinel_plot <- copy(sentinel_ranks)
-sentinel_plot[, method := factor(method, levels = method_order_axis)]
-p_sentinel <- ggplot(
-  sentinel_plot,
-  aes(x = method, y = discovery_rank)
-) +
-  geom_col(width = 0.72) +
-  scale_y_reverse() +
-  labs(
-    title = "Prespecified TNF-TNFRSF1A-Endothelial sentinel-axis rank",
-    subtitle = paste0(
-      "Stage 8 external integrated rank = ",
-      unique(sentinel_plot$external_integrated_rank)
+save_plot_bundle <- function(
+  plot_object,
+  stem,
+  width,
+  height
+) {
+  png_path <- file.path(
+    DIRS$figures,
+    paste0(stem, ".png")
+  )
+  pdf_path <- file.path(
+    DIRS$figures,
+    paste0(stem, ".pdf")
+  )
+  tiff_path <- file.path(
+    DIRS$figures,
+    paste0(stem, ".tiff")
+  )
+
+  ggplot2::ggsave(
+    png_path,
+    plot_object,
+    width = width,
+    height = height,
+    dpi = 300,
+    bg = "white"
+  )
+  ggplot2::ggsave(
+    pdf_path,
+    plot_object,
+    width = width,
+    height = height,
+    bg = "white"
+  )
+  ggplot2::ggsave(
+    tiff_path,
+    plot_object,
+    width = width,
+    height = height,
+    dpi = 600,
+    compression = "lzw",
+    bg = "white"
+  )
+
+  invisible(
+    c(
+      png = png_path,
+      pdf = pdf_path,
+      tiff = tiff_path
+    )
+  )
+}
+
+as_logical_safe <- function(x) {
+  if (is.logical(x)) return(x)
+  y <- tolower(trimws(as.character(x)))
+  out <- rep(NA, length(y))
+  out[y %in% c("true", "t", "1", "yes")] <- TRUE
+  out[y %in% c("false", "f", "0", "no")] <- FALSE
+  out
+}
+
+read_table_required <- function(filename) {
+  path <- file.path(DIRS$tables, filename)
+  if (!file.exists(path)) {
+    stop("Required upstream table is missing: ", path)
+  }
+  data.table::fread(
+    path,
+    encoding = "UTF-8",
+    na.strings = c("", "NA", "NaN")
+  )
+}
+
+############################################################
+## 2. Reload saved upstream objects and Tables 01-35
+############################################################
+
+required_disk_inputs <- c(
+  CARDIAC_RDS,
+  MACROPHAGE_RDS,
+  SOURCE_CHECKPOINT,
+  file.path(
+    DIRS$tables,
+    "01_locked_GSE236585_sample_metadata.csv"
+  ),
+  file.path(
+    DIRS$tables,
+    "03_stage2_signature_size_summary.csv"
+  ),
+  file.path(
+    DIRS$tables,
+    "04A_checkpoint_resume_audit.csv"
+  ),
+  file.path(
+    DIRS$tables,
+    "04_GSE236585_10x_file_mapping_and_dimensions.csv"
+  ),
+  file.path(
+    DIRS$tables,
+    "05_sample_specific_QC_thresholds.csv"
+  ),
+  file.path(
+    DIRS$tables,
+    "06_sample_QC_retention_summary.csv"
+  ),
+  file.path(
+    DIRS$tables,
+    "06A_checkpoint_cell_count_validation.csv"
+  ),
+  file.path(
+    DIRS$tables,
+    "07_scDblFinder_cell_calls.csv.gz"
+  ),
+  file.path(
+    DIRS$tables,
+    "07B_scDblFinder_rate_summary.csv"
+  ),
+  file.path(
+    DIRS$tables,
+    "08_post_doublet_cell_counts.csv"
+  ),
+  file.path(
+    DIRS$tables,
+    "09_PCA_variance_and_dimensions.csv"
+  ),
+  file.path(
+    DIRS$tables,
+    "10_major_celltype_cluster_marker_scores.csv"
+  ),
+  file.path(
+    DIRS$tables,
+    "11_major_celltype_cluster_annotation.csv"
+  ),
+  file.path(
+    DIRS$tables,
+    "15_celltype_composition_by_sample.csv"
+  ),
+  file.path(
+    DIRS$tables,
+    "16_celltype_composition_exploratory_statistics.csv"
+  ),
+  file.path(
+    DIRS$tables,
+    "17_signature_gene_coverage_in_GSE236585.csv"
+  ),
+  file.path(
+    DIRS$tables,
+    "21_major_celltype_pseudobulk_eligibility.csv"
+  ),
+  file.path(
+    DIRS$tables,
+    "22_major_celltype_pseudobulk_DE_edgeR_limma.csv.gz"
+  ),
+  file.path(
+    DIRS$tables,
+    "23_major_celltype_pseudobulk_DE_summary.csv"
+  ),
+  file.path(
+    DIRS$tables,
+    "24_top_pseudobulk_DE_genes_per_celltype.csv"
+  ),
+  file.path(
+    DIRS$tables,
+    "27_pseudobulk_program_statistics.csv"
+  ),
+  file.path(
+    DIRS$tables,
+    "28_stage2_stage3_gene_level_concordance.csv"
+  ),
+  file.path(
+    DIRS$tables,
+    "30_macrophage_cluster_annotation.csv"
+  ),
+  file.path(
+    DIRS$tables,
+    "33_macrophage_state_composition_by_sample.csv"
+  ),
+  file.path(
+    DIRS$tables,
+    "34_macrophage_state_sample_level_scores.csv"
+  ),
+  file.path(
+    DIRS$tables,
+    "35_macrophage_state_score_statistics.csv"
+  )
+)
+
+missing_disk_inputs <- required_disk_inputs[
+  !file.exists(required_disk_inputs)
+]
+if (length(missing_disk_inputs) > 0L) {
+  stop(
+    "The first supplement did not leave all required disk outputs. ",
+    "Missing path(s):\n",
+    paste(missing_disk_inputs, collapse = "\n")
+  )
+}
+
+log_msg("Loading annotated cardiac Seurat object.")
+cardiac <- readRDS(CARDIAC_RDS)
+log_msg("Loading subclustered macrophage Seurat object.")
+macrophage <- readRDS(MACROPHAGE_RDS)
+
+if (!inherits(cardiac, "Seurat")) {
+  stop("CARDIAC_RDS is not a Seurat object.")
+}
+if (!inherits(macrophage, "Seurat")) {
+  stop("MACROPHAGE_RDS is not a Seurat object.")
+}
+
+sample_meta <- read_table_required(
+  "01_locked_GSE236585_sample_metadata.csv"
+)
+signature_size_summary <- read_table_required(
+  "03_stage2_signature_size_summary.csv"
+)
+checkpoint_audit <- read_table_required(
+  "04A_checkpoint_resume_audit.csv"
+)
+file_map <- read_table_required(
+  "04_GSE236585_10x_file_mapping_and_dimensions.csv"
+)
+qc_thresholds <- read_table_required(
+  "05_sample_specific_QC_thresholds.csv"
+)
+qc_summary <- read_table_required(
+  "06_sample_QC_retention_summary.csv"
+)
+qc_validation <- read_table_required(
+  "06A_checkpoint_cell_count_validation.csv"
+)
+doublet_calls <- read_table_required(
+  "07_scDblFinder_cell_calls.csv.gz"
+)
+doublet_rates <- read_table_required(
+  "07B_scDblFinder_rate_summary.csv"
+)
+post_doublet_counts <- read_table_required(
+  "08_post_doublet_cell_counts.csv"
+)
+pca_variance_table <- read_table_required(
+  "09_PCA_variance_and_dimensions.csv"
+)
+cluster_score_long <- read_table_required(
+  "10_major_celltype_cluster_marker_scores.csv"
+)
+cluster_annotation <- read_table_required(
+  "11_major_celltype_cluster_annotation.csv"
+)
+composition_complete <- read_table_required(
+  "15_celltype_composition_by_sample.csv"
+)
+composition_stats <- read_table_required(
+  "16_celltype_composition_exploratory_statistics.csv"
+)
+signature_coverage <- read_table_required(
+  "17_signature_gene_coverage_in_GSE236585.csv"
+)
+pseudobulk_eligibility <- read_table_required(
+  "21_major_celltype_pseudobulk_eligibility.csv"
+)
+pseudobulk_results <- read_table_required(
+  "22_major_celltype_pseudobulk_DE_edgeR_limma.csv.gz"
+)
+pseudobulk_summary <- read_table_required(
+  "23_major_celltype_pseudobulk_DE_summary.csv"
+)
+top_pseudobulk_de <- read_table_required(
+  "24_top_pseudobulk_DE_genes_per_celltype.csv"
+)
+pseudobulk_program_stats <- read_table_required(
+  "27_pseudobulk_program_statistics.csv"
+)
+stage2_stage3_concordance <- read_table_required(
+  "28_stage2_stage3_gene_level_concordance.csv"
+)
+macrophage_cluster_annotation <- read_table_required(
+  "30_macrophage_cluster_annotation.csv"
+)
+macrophage_state_composition <- read_table_required(
+  "33_macrophage_state_composition_by_sample.csv"
+)
+macrophage_state_scores <- read_table_required(
+  "34_macrophage_state_sample_level_scores.csv"
+)
+macrophage_state_score_stats <- read_table_required(
+  "35_macrophage_state_score_statistics.csv"
+)
+
+sample_meta[
+  ,
+  condition := factor(
+    condition,
+    levels = c("Control", "HFpEF")
+  )
+]
+composition_complete[
+  ,
+  condition := factor(
+    condition,
+    levels = c("Control", "HFpEF")
+  )
+]
+macrophage_state_scores[
+  ,
+  condition := factor(
+    condition,
+    levels = c("Control", "HFpEF")
+  )
+]
+
+if (
+  "checkpoint_matches_v2_QC" %in%
+    names(qc_validation)
+) {
+  qc_validation[
+    ,
+    checkpoint_matches_v2_QC :=
+      as_logical_safe(
+        checkpoint_matches_v2_QC
+      )
+  ]
+}
+if ("eligible" %in% names(pseudobulk_eligibility)) {
+  pseudobulk_eligibility[
+    ,
+    eligible :=
+      as_logical_safe(eligible)
+  ]
+}
+
+############################################################
+## 3. Reconstruct compact variables and validate disk state
+############################################################
+
+MIN_FEATURES_HARD <- 200L
+MAX_FEATURES_HARD <- 9000L
+MAX_COUNTS_HARD <- 120000L
+MAX_PERCENT_MT_HARD <- 25
+QC_MAD_MULTIPLIER <- 4
+QC_UPPER_QUANTILE <- 0.995
+
+SCDOUBLETFINDER_DBR_PER_1K <- 0.008
+doublet_status <- "COMPLETED_REQUIRED"
+
+N_VARIABLE_FEATURES <- 3000L
+MAJOR_CLUSTER_RESOLUTION <- 0.55
+MACROPHAGE_CLUSTER_RESOLUTION <- 0.65
+
+MIN_CELLS_PER_SAMPLE_CELLTYPE <- 20L
+MIN_SAMPLES_PER_CONDITION <- 3L
+EXCLUDED_FROM_PSEUDOBULK <- c(
+  "Low_quality_mitochondrial",
+  "Cycling_unresolved",
+  "Unresolved"
+)
+
+SIGNATURE_TIERS <- c(
+  "Tier_A_both_DESeq2_FDR_and_edgeR_direction",
+  "Tier_B_one_DESeq2_FDR_effect_supported",
+  "Tier_C_effect_and_method_supported"
+)
+SIGNATURE_SIZES <- c(50L, 100L, 150L, 200L)
+PRIMARY_SIGNATURE_SIZE <- 150L
+
+dims_use <- pca_variance_table[
+  used_for_graph == TRUE,
+  PC
+]
+if (length(dims_use) == 0L) {
+  dims_use <- 1:30
+}
+
+primary_signature_names <- unique(
+  signature_size_summary[
+    requested_size_per_direction ==
+      PRIMARY_SIGNATURE_SIZE,
+    signature_name
+  ]
+)
+expected_primary_signatures <- c(
+  "Ccr2pos_Top150",
+  "Ccr2neg_Top150",
+  "CrossSubset_Top150"
+)
+if (
+  length(primary_signature_names) != 3L ||
+  !setequal(
+    primary_signature_names,
+    expected_primary_signatures
+  )
+) {
+  stop(
+    "Primary signature reconstruction failed. Observed: ",
+    paste(primary_signature_names, collapse = ", ")
+  )
+}
+primary_signature_names <-
+  expected_primary_signatures
+
+primary_score_columns <- paste0(
+  "score_",
+  primary_signature_names,
+  "_net"
+)
+
+eligible_celltypes <- pseudobulk_eligibility[
+  eligible == TRUE,
+  major_cell_type
+]
+eligible_celltypes <- unique(
+  as.character(eligible_celltypes)
+)
+
+macrophage_cells <- colnames(macrophage)
+macrophage_status <- "COMPLETED"
+
+expected_singlets <- sum(
+  post_doublet_counts$retained_singlet_cells,
+  na.rm = TRUE
+)
+expected_macrophage_cells <- sum(
+  cardiac$major_cell_type ==
+    "Macrophage_Monocyte",
+  na.rm = TRUE
+)
+
+required_cardiac_metadata <- c(
+  "sample_accession",
+  "condition",
+  "seurat_clusters",
+  "major_cell_type",
+  "nFeature_RNA",
+  "nCount_RNA",
+  "percent.mt",
+  primary_score_columns
+)
+missing_cardiac_metadata <- setdiff(
+  required_cardiac_metadata,
+  names(cardiac@meta.data)
+)
+if (length(missing_cardiac_metadata) > 0L) {
+  stop(
+    "The saved cardiac object is missing metadata column(s): ",
+    paste(missing_cardiac_metadata, collapse = ", ")
+  )
+}
+
+required_macrophage_metadata <- c(
+  "sample_accession",
+  "condition",
+  "seurat_clusters",
+  "macrophage_state"
+)
+missing_macrophage_metadata <- setdiff(
+  required_macrophage_metadata,
+  names(macrophage@meta.data)
+)
+if (length(missing_macrophage_metadata) > 0L) {
+  stop(
+    "The saved macrophage object is missing metadata column(s): ",
+    paste(missing_macrophage_metadata, collapse = ", ")
+  )
+}
+
+if (!"umap" %in% names(cardiac@reductions)) {
+  stop("The saved cardiac object does not contain UMAP.")
+}
+if (!"umap" %in% names(macrophage@reductions)) {
+  stop("The saved macrophage object does not contain UMAP.")
+}
+if (ncol(cardiac) != expected_singlets) {
+  stop(
+    "Cardiac object/table mismatch: object cells=",
+    ncol(cardiac),
+    "; expected singlets=",
+    expected_singlets
+  )
+}
+if (ncol(macrophage) != expected_macrophage_cells) {
+  stop(
+    "Macrophage object/annotation mismatch: object cells=",
+    ncol(macrophage),
+    "; cardiac macrophage labels=",
+    expected_macrophage_cells
+  )
+}
+if (
+  data.table::uniqueN(
+    sample_meta$sample_accession
+  ) != 6L ||
+  sum(sample_meta$condition == "Control") != 3L ||
+  sum(sample_meta$condition == "HFpEF") != 3L
+) {
+  stop(
+    "Sample metadata is not the expected 3 Control + 3 HFpEF design."
+  )
+}
+if (
+  data.table::uniqueN(
+    doublet_calls$sample_accession
+  ) != 6L
+) {
+  stop("Doublet-call table does not contain all six samples.")
+}
+if (
+  any(
+    !primary_score_columns %in%
+      names(macrophage_state_scores)
+  )
+) {
+  stop(
+    "Macrophage score table is missing primary score columns."
+  )
+}
+
+## Reconstruct a compact sample-level checkpoint metadata object solely
+## for completion checks. No cell-level checkpoint is reloaded.
+checkpoint_meta <- data.table::copy(sample_meta)
+
+## Preserve upstream warnings, if any.
+warning_records <- list()
+if (
+  file.exists(UPSTREAM_WARNING_FILE) &&
+  file.info(UPSTREAM_WARNING_FILE)$size > 0
+) {
+  upstream_warning_lines <- readLines(
+    UPSTREAM_WARNING_FILE,
+    warn = FALSE,
+    encoding = "UTF-8"
+  )
+  upstream_warning_lines <- upstream_warning_lines[
+    nzchar(trimws(upstream_warning_lines))
+  ]
+
+  if (length(upstream_warning_lines) > 0L) {
+    warning_records[[1L]] <- data.frame(
+      timestamp = NA_character_,
+      category = "UPSTREAM_WARNING_LOG",
+      item = basename(UPSTREAM_WARNING_FILE),
+      message = upstream_warning_lines,
+      stringsAsFactors = FALSE
+    )
+  }
+}
+
+disk_resume_provenance <- data.table::data.table(
+  continuation_type =
+    "Independent disk resume after R restart",
+  based_on_script_1 =
+    "3、第三阶段代码.R",
+  based_on_script_2 =
+    "3.1、第三阶段代码、第一次补充、后面出错.R",
+  resume_section =
+    "Section 17: Figures and source data",
+  cardiac_object =
+    normalizePath(
+      CARDIAC_RDS,
+      winslash = "/",
+      mustWork = TRUE
     ),
-    x = NULL,
-    y = "Discovery rank (lower is better)"
-  ) +
-  theme_revision(9) +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))
-figure_audit[[length(figure_audit) + 1L]] <- save_plot_all(
-  p_sentinel, "FigR1F_sentinel_axis_rank_comparison", 7.2, 4.0
+  macrophage_object =
+    normalizePath(
+      MACROPHAGE_RDS,
+      winslash = "/",
+      mustWork = TRUE
+    ),
+  cardiac_singlets = ncol(cardiac),
+  macrophage_monocyte_cells =
+    ncol(macrophage),
+  upstream_analysis_repeated = FALSE,
+  R_same_session_required = FALSE,
+  original_analysis_start_time =
+    ORIGINAL_ANALYSIS_START_TIME,
+  downstream_resume_start_time =
+    format(START_TIME, "%Y-%m-%d %H:%M:%S")
 )
-write_csv_safe(sentinel_plot, file.path(DIRS$source, "FigR1F_source_data.csv"))
 
-figure_audit_dt <- rbindlist(figure_audit, use.names = TRUE, fill = TRUE)
-write_csv_safe(figure_audit_dt, file.path(DIRS$tables, "16_figure_export_audit.csv"))
-
-############################################################
-## 9. Interpretation boundaries and manuscript-ready summary
-############################################################
-
-claim_boundaries <- data.table(
-  item = c(
-    "TF expression baseline",
-    "Regulon-only baseline",
-    "Perturbation-only ranking",
-    "Communication-only ranking",
-    "Full cross-layer ranking",
-    "External validation target",
-    "Candidate-TF rank correlation",
-    "Stage 7 AUC",
-    "Sentinel TNF axis"
-  ),
-  permitted_interpretation = c(
-    "Conventional TF differential-expression comparator.",
-    "TF activity comparator based on target behavior rather than TF abundance.",
-    "Program-recovery comparator excluding Stage 6 and Stage 8 evidence.",
-    "Communication-network comparator excluding Stage 8 evidence.",
-    "Equal-weight discovery integration of regulon, perturbation robustness, and communication layers.",
-    "Independent or orthogonal Stage 8 evidence used only to evaluate frozen discovery rankings.",
-    "Descriptive alignment only because the frozen candidate set contains three TFs.",
-    "Internal sample-separability metric; not clinical sensitivity, specificity, or diagnostic accuracy.",
-    "Prespecified representative inflammatory-endothelial branch; it need not rank first in every external cohort."
-  ),
-  prohibited_interpretation = c(
-    "Do not treat expression rank as a gold-standard truth.",
-    "Do not claim direct TF binding or causal regulation.",
-    "Do not treat virtual perturbation as experimental knockout evidence.",
-    "Do not claim physical ligand-receptor signaling or causal communication.",
-    "Do not claim a universally optimal algorithm from one disease application.",
-    "Do not feed external evidence back into discovery ranks.",
-    "Do not report an inferential P value for a three-item rank correlation.",
-    "Do not describe the model as a validated classifier or clinical predictor.",
-    "Do not claim universal dominance over PDGFB, IL1B, or other network branches."
+data.table::fwrite(
+  disk_resume_provenance,
+  file.path(
+    DIRS$tables,
+    "40_disk_resume_provenance.csv"
   )
 )
-write_csv_safe(
-  claim_boundaries,
-  file.path(DIRS$tables, "17_revision_claim_boundaries.csv")
+data.table::fwrite(
+  cleanup_audit,
+  file.path(
+    DIRS$logs,
+    "stage3_disk_resume_cleanup_audit.csv"
+  )
 )
 
-summary_lines <- c(
-  "Revision benchmark and ablation module",
-  paste0("Analysis schema: ", ANALYSIS_SCHEMA),
-  "",
-  "Primary questions addressed:",
-  "1. Are BHLHE40, NFKB1, and RELA recovered by simple TF-expression ranking?",
-  "2. What is gained by regulon, perturbation, and communication integration?",
-  "3. How stable are candidate ranks when one evidence layer is removed?",
-  "4. Do frozen axis rankings recover external Stage 8 support better than simple expression baselines?",
-  "5. Which Stage 7 feature layers contribute most to internal sample separation?",
-  "",
-  paste0(
-    "Frozen TF candidates: ",
-    paste(candidate_rank[order(rank_full_cross_layer), tf_symbol], collapse = "; ")
-  ),
-  paste0(
-    "Stage 8 external TF order: ",
-    paste(candidate_rank[order(external_integrated_rank), tf_symbol], collapse = "; ")
-  ),
-  paste0(
-    "Sentinel axis: ", SENTINEL_AXIS_KEY,
-    "; Stage 8 external rank = ",
-    unique(sentinel_ranks$external_integrated_rank)
-  ),
-  "",
-  "Interpretation:",
-  "- The module tests added information and ranking stability; it does not require NFKB1 or the TNF axis to be universally rank 1.",
-  "- BHLHE40 and NFKB1 may occupy complementary program-level and communication-centered roles.",
-  "- Stage 8 is an external-evaluation layer, not an ingredient of the discovery score.",
-  "- Rank correlations involving only three TFs are descriptive and should be reported without inferential overstatement."
+log_msg(
+  "Disk state validated: ",
+  ncol(cardiac),
+  " cardiac singlets; ",
+  ncol(macrophage),
+  " macrophage/monocyte cells; ",
+  length(eligible_celltypes),
+  " eligible pseudobulk cell types."
 )
-writeLines(
-  summary_lines,
-  con = file.path(DIRS$methods, "revision_benchmark_ablation_summary.txt"),
-  useBytes = TRUE
+log_msg(
+  "Continuing directly at Section 17."
 )
 
-methods_lines <- c(
-  "Revision benchmark and ablation methods",
-  "",
-  "TF baselines:",
-  "TF-expression-only ranking was defined by the absolute Hedges' g for TF expression in HFpEF versus control macrophage pseudobulk samples.",
-  "Regulon-only ranking was defined by the absolute Hedges' g for weighted regulon activity.",
-  "The Stage 4 multifeature rank was imported without modification from the frozen Stage 4 priority table.",
-  "Perturbation-only ranking was calculated from the mean rank of primary program gap reduction, positive-recovery fraction, biological-sample improvement fraction, inflammatory-program recovery, and perturbation specificity. Stage 4 and Stage 8 evidence were excluded.",
-  "Communication-only ranking was calculated from the mean rank of strict cross-stage axes, best axis rank, total axis coverage, NicheNet AUPR, and NicheNet Pearson correlation. Stage 8 evidence was excluded.",
-  "The full cross-layer discovery rank was the equal-weight mean of the Stage 4 multifeature rank, Stage 5B bootstrap-robustness rank, and Stage 6 communication-only rank.",
-  "",
-  "Ablation:",
-  "Leave-one-layer-out scenarios omitted the regulon, perturbation, or communication component while retaining the other frozen layers. Single-layer baselines were also reported.",
-  "",
-  "External evaluation:",
-  "Stage 8 integrated ranks, support fractions, effect sizes, and FDR-supported rows were used only after discovery ranks had been fixed. Candidate-TF comparisons were descriptive because three TFs were prospectively frozen for validation.",
-  "",
-  "Communication-axis benchmarks:",
-  "The Stage 6 full integrated axis rank was compared with ligand-expression-only, receptor-expression-only, combined ligand-receptor-expression, NicheNet-only, and cross-stage-support-only rankings. All methods were re-ranked within the same frozen set of axes evaluated in Stage 8.",
-  "Top-k external performance was summarized as the fraction of axes with Stage 8 support fraction >= 0.50, the mean external effect size, and the number of FDR-supported axes.",
-  "",
-  "Quantitative performance:",
-  "Stage 7 leave-pair-out AUC, empirical permutation P values, and exact feature-attribution metrics were imported unchanged. These metrics quantify internal sample separability and are not clinical diagnostic-performance estimates."
-)
-writeLines(
-  methods_lines,
-  con = file.path(DIRS$methods, "revision_benchmark_ablation_methods.txt"),
-  useBytes = TRUE
-)
 
 ############################################################
-## 10. Workbook, completion checks, script archive, and CHECK
+## 17. Figures and source data
+############################################################
+
+major_palette <- c(
+  "Cardiomyocyte" = "#8C564B",
+  "Fibroblast" = "#E377C2",
+  "Endothelial" = "#17BECF",
+  "Lymphatic_endothelial" = "#9EDAE5",
+  "Pericyte" = "#9467BD",
+  "Smooth_muscle" = "#7F7F7F",
+  "Macrophage_Monocyte" = "#D62728",
+  "Dendritic_cell" = "#FF9896",
+  "Neutrophil" = "#BCBD22",
+  "T_NK" = "#1F77B4",
+  "B_cell" = "#AEC7E8",
+  "Mast_cell" = "#FF7F0E",
+  "Epicardial_Mesothelial" = "#2CA02C",
+  "Schwann_Glial" = "#8C6D31",
+  "Platelet_Megakaryocyte" = "#C49C94",
+  "Erythroid" = "#AD494A",
+  "Cycling_unresolved" = "#637939",
+  "Low_quality_mitochondrial" = "#BDBDBD",
+  "Unresolved" = "#525252"
+)
+
+condition_palette <- c(
+  "Control" = "#4C78A8",
+  "HFpEF" = "#E45756"
+)
+
+umap_coordinates <- as.data.table(
+  Embeddings(
+    cardiac,
+    reduction = "umap"
+  ),
+  keep.rownames = "cell"
+)
+umap_coordinates <- merge(
+  umap_coordinates,
+  as.data.table(
+    cardiac@meta.data,
+    keep.rownames = "cell"
+  )[
+    ,
+    c(
+      "cell",
+      "sample_accession",
+      "condition",
+      "seurat_clusters",
+      "major_cell_type",
+      primary_score_columns
+    ),
+    with = FALSE
+  ],
+  by = "cell",
+  all.x = TRUE
+)
+fwrite(
+  umap_coordinates,
+  file.path(
+    DIRS$source,
+    "Fig3A_3B_3D_UMAP_source.csv.gz"
+  ),
+  compress = "gzip"
+)
+
+p_umap_celltype <- DimPlot(
+  cardiac,
+  reduction = "umap",
+  group.by = "major_cell_type",
+  label = TRUE,
+  repel = TRUE,
+  raster = TRUE
+) +
+  scale_color_manual(
+    values = major_palette,
+    na.value = "grey70"
+  ) +
+  labs(
+    title = "GSE236585 cardiac scRNA-seq",
+    subtitle = "Major cell types assigned by cluster-level canonical-marker scoring",
+    color = "Major cell type"
+  ) +
+  theme_bw(base_size = 10)
+
+save_plot_bundle(
+  p_umap_celltype,
+  "Fig3A_GSE236585_UMAP_major_cell_types",
+  9,
+  7
+)
+
+p_umap_condition <- DimPlot(
+  cardiac,
+  reduction = "umap",
+  group.by = "condition",
+  split.by = "condition",
+  raster = TRUE
+) +
+  scale_color_manual(
+    values = condition_palette
+  ) +
+  labs(
+    title = "GSE236585 cells by biological condition",
+    color = "Condition"
+  ) +
+  theme_bw(base_size = 10)
+
+save_plot_bundle(
+  p_umap_condition,
+  "Fig3B_GSE236585_UMAP_by_condition",
+  11,
+  5.5
+)
+
+fwrite(
+  composition_complete,
+  file.path(
+    DIRS$source,
+    "Fig3C_celltype_composition_source.csv"
+  )
+)
+p_composition <- ggplot(
+  composition_complete,
+  aes(
+    x = sample_accession,
+    y = cell_fraction,
+    fill = major_cell_type
+  )
+) +
+  geom_col(
+    width = 0.78
+  ) +
+  facet_grid(
+    ~ condition,
+    scales = "free_x",
+    space = "free_x"
+  ) +
+  scale_fill_manual(
+    values = major_palette,
+    na.value = "grey70"
+  ) +
+  scale_y_continuous(
+    labels = scales::percent_format(
+      accuracy = 1
+    )
+  ) +
+  labs(
+    x = NULL,
+    y = "Fraction of retained cells",
+    fill = "Major cell type",
+    title = "Sample-level cardiac cell-type composition",
+    subtitle = "Composition is descriptive; inferential comparisons use biological-sample fractions"
+  ) +
+  theme_bw(base_size = 10) +
+  theme(
+    axis.text.x = element_text(
+      angle = 45,
+      hjust = 1
+    )
+  )
+
+save_plot_bundle(
+  p_composition,
+  "Fig3C_GSE236585_celltype_composition",
+  11,
+  6
+)
+
+primary_pos_col <- paste0(
+  "score_Ccr2pos_Top",
+  PRIMARY_SIGNATURE_SIZE,
+  "_net"
+)
+primary_neg_col <- paste0(
+  "score_Ccr2neg_Top",
+  PRIMARY_SIGNATURE_SIZE,
+  "_net"
+)
+
+p_score_umap_pos <- FeaturePlot(
+  cardiac,
+  features = primary_pos_col,
+  reduction = "umap",
+  raster = TRUE
+) +
+  labs(
+    title = paste0(
+      "Projected Ccr2-positive disease-like program (Top",
+      PRIMARY_SIGNATURE_SIZE,
+      ")"
+    ),
+    subtitle = "Higher score indicates expression aligned with the Stage 2 disease-associated direction"
+  ) +
+  theme_bw(base_size = 10)
+
+save_plot_bundle(
+  p_score_umap_pos,
+  "Fig3D_GSE236585_Ccr2pos_program_UMAP",
+  8,
+  6.5
+)
+
+p_score_umap_neg <- FeaturePlot(
+  cardiac,
+  features = primary_neg_col,
+  reduction = "umap",
+  raster = TRUE
+) +
+  labs(
+    title = paste0(
+      "Projected Ccr2-negative disease-like program (Top",
+      PRIMARY_SIGNATURE_SIZE,
+      ")"
+    ),
+    subtitle = "Higher score indicates expression aligned with the Stage 2 disease-associated direction"
+  ) +
+  theme_bw(base_size = 10)
+
+save_plot_bundle(
+  p_score_umap_neg,
+  "FigS3A_GSE236585_Ccr2neg_program_UMAP",
+  8,
+  6.5
+)
+
+primary_program_stats <- pseudobulk_program_stats[
+  signature_name %in%
+    primary_signature_names
+]
+fwrite(
+  primary_program_stats,
+  file.path(
+    DIRS$source,
+    "Fig3E_program_localization_source.csv"
+  )
+)
+
+p_program_localization <- ggplot(
+  primary_program_stats,
+  aes(
+    x = hfpef_minus_control_z_net,
+    y = reorder(
+      major_cell_type,
+      hfpef_minus_control_z_net
+    ),
+    shape = signature_name
+  )
+) +
+  geom_vline(
+    xintercept = 0,
+    linetype = 2
+  ) +
+  geom_point(
+    size = 3
+  ) +
+  facet_wrap(
+    ~ signature_name,
+    scales = "free_y"
+  ) +
+  labs(
+    x = "HFpEF − Control sample-level pseudobulk program score",
+    y = NULL,
+    shape = "Program",
+    title = "Cell-type localization of Stage 2 disease-like programs",
+    subtitle = "Positive values indicate higher disease-like program activity in HFpEF biological samples"
+  ) +
+  theme_bw(base_size = 10)
+
+save_plot_bundle(
+  p_program_localization,
+  "Fig3E_stage2_program_localization_by_celltype",
+  12,
+  7
+)
+
+fwrite(
+  stage2_stage3_concordance,
+  file.path(
+    DIRS$source,
+    "Fig3F_stage2_stage3_concordance_source.csv"
+  )
+)
+p_concordance <- ggplot(
+  stage2_stage3_concordance,
+  aes(
+    x = tier_ABC_spearman,
+    y = reorder(
+      major_cell_type,
+      tier_ABC_spearman
+    ),
+    shape = stage2_subset
+  )
+) +
+  geom_vline(
+    xintercept = 0,
+    linetype = 2
+  ) +
+  geom_point(
+    size = 3
+  ) +
+  facet_wrap(
+    ~ stage2_subset
+  ) +
+  labs(
+    x = "Spearman correlation:\nStage 2 disease log2FC vs Stage 3 HFpEF pseudobulk log2FC",
+    y = NULL,
+    shape = "Stage 2 subset",
+    title = "Gene-level cross-dataset concordance by cardiac cell type"
+  ) +
+  theme_bw(base_size = 10)
+
+save_plot_bundle(
+  p_concordance,
+  "Fig3F_stage2_stage3_gene_level_concordance",
+  11,
+  7
+)
+
+if (exists("macrophage") &&
+    macrophage_status == "COMPLETED") {
+  macrophage_umap <- as.data.table(
+    Embeddings(
+      macrophage,
+      reduction = "umap"
+    ),
+    keep.rownames = "cell"
+  )
+  macrophage_umap <- merge(
+    macrophage_umap,
+    as.data.table(
+      macrophage@meta.data,
+      keep.rownames = "cell"
+    )[
+      ,
+      .(
+        cell,
+        sample_accession,
+        condition,
+        seurat_clusters,
+        macrophage_state
+      )
+    ],
+    by = "cell",
+    all.x = TRUE
+  )
+  fwrite(
+    macrophage_umap,
+    file.path(
+      DIRS$source,
+      "Fig3G_macrophage_UMAP_source.csv"
+    )
+  )
+
+  p_macrophage_umap <- DimPlot(
+    macrophage,
+    reduction = "umap",
+    group.by = "macrophage_state",
+    label = TRUE,
+    repel = TRUE,
+    raster = TRUE
+  ) +
+    labs(
+      title = "GSE236585 macrophage/monocyte subclustering",
+      subtitle = "State labels are marker-defined discovery candidates",
+      color = "Macrophage state"
+    ) +
+    theme_bw(base_size = 10)
+
+  save_plot_bundle(
+    p_macrophage_umap,
+    "Fig3G_GSE236585_macrophage_state_UMAP",
+    9,
+    7
+  )
+
+  primary_macrophage_scores <-
+    macrophage_state_scores[
+      ,
+      c(
+        "sample_accession",
+        "condition",
+        "macrophage_state",
+        "cell_count",
+        primary_pos_col,
+        primary_neg_col
+      ),
+      with = FALSE
+    ]
+  primary_macrophage_long <- melt(
+    primary_macrophage_scores,
+    id.vars = c(
+      "sample_accession",
+      "condition",
+      "macrophage_state",
+      "cell_count"
+    ),
+    measure.vars = c(
+      primary_pos_col,
+      primary_neg_col
+    ),
+    variable.name = "program",
+    value.name = "sample_mean_score"
+  )
+  fwrite(
+    primary_macrophage_long,
+    file.path(
+      DIRS$source,
+      "Fig3H_macrophage_state_program_source.csv"
+    )
+  )
+
+  p_macrophage_scores <- ggplot(
+    primary_macrophage_long,
+    aes(
+      x = condition,
+      y = sample_mean_score,
+      shape = condition
+    )
+  ) +
+    geom_point(
+      size = 2.8,
+      position = position_jitter(
+        width = 0.08,
+        height = 0
+      )
+    ) +
+    facet_grid(
+      macrophage_state ~ program,
+      scales = "free_y"
+    ) +
+    scale_shape_manual(
+      values = c(
+        "Control" = 16,
+        "HFpEF" = 17
+      )
+    ) +
+    labs(
+      x = NULL,
+      y = "Sample-level mean disease-like score",
+      shape = "Condition",
+      title = "Stage 2 programs across macrophage-state candidates",
+      subtitle = "Each point is one biological sample"
+    ) +
+    theme_bw(base_size = 9) +
+    theme(
+      axis.text.x = element_text(
+        angle = 30,
+        hjust = 1
+      )
+    )
+
+  save_plot_bundle(
+    p_macrophage_scores,
+    "Fig3H_macrophage_state_sample_level_program_scores",
+    12,
+    11
+  )
+}
+
+## QC figures.
+qc_plot_data <- as.data.table(
+  cardiac@meta.data,
+  keep.rownames = "cell"
+)[
+  ,
+  .(
+    cell,
+    sample_accession,
+    condition,
+    nFeature_RNA,
+    nCount_RNA,
+    percent.mt
+  )
+]
+fwrite(
+  qc_plot_data,
+  file.path(
+    DIRS$source,
+    "FigS3B_QC_violin_source.csv.gz"
+  ),
+  compress = "gzip"
+)
+
+p_qc <- VlnPlot(
+  cardiac,
+  features = c(
+    "nFeature_RNA",
+    "nCount_RNA",
+    "percent.mt"
+  ),
+  group.by = "sample_accession",
+  pt.size = 0,
+  ncol = 3
+) &
+  theme_bw(base_size = 8) &
+  theme(
+    axis.text.x = element_text(
+      angle = 50,
+      hjust = 1
+    )
+  )
+
+save_plot_bundle(
+  p_qc,
+  "FigS3B_GSE236585_QC_violin",
+  14,
+  5
+)
+
+## Major-cell-type marker score heatmap.
+marker_heat <- dcast(
+  cluster_score_long,
+  marker_set ~ seurat_cluster,
+  value.var = "standardized_marker_score"
+)
+marker_heat_matrix <- as.matrix(
+  marker_heat[
+    ,
+    -1,
+    with = FALSE
+  ]
+)
+rownames(marker_heat_matrix) <-
+  marker_heat$marker_set
+write_csv_safe(
+  marker_heat,
+  file.path(
+    DIRS$source,
+    "FigS3C_major_marker_score_heatmap_source.csv"
+  )
+)
+
+png(
+  file.path(
+    DIRS$figures,
+    "FigS3C_major_marker_score_heatmap.png"
+  ),
+  width = 3000,
+  height = 2400,
+  res = 300
+)
+pheatmap(
+  marker_heat_matrix,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  border_color = NA,
+  main = "Cluster-level canonical-marker scores"
+)
+dev.off()
+
+pdf(
+  file.path(
+    DIRS$figures,
+    "FigS3C_major_marker_score_heatmap.pdf"
+  ),
+  width = 10,
+  height = 8
+)
+pheatmap(
+  marker_heat_matrix,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  border_color = NA,
+  main = "Cluster-level canonical-marker scores"
+)
+dev.off()
+
+############################################################
+## 18. Workbook, methods, and parameter documentation
 ############################################################
 
 workbook_path <- file.path(
   DIRS$tables,
-  "18_revision_benchmark_ablation_key_results.xlsx"
+  "36_GSE236585_stage3_key_results.xlsx"
 )
-wb <- openxlsx::createWorkbook()
-add_sheet <- function(name, x) {
-  openxlsx::addWorksheet(wb, name)
-  openxlsx::writeDataTable(wb, name, as.data.frame(x))
-  openxlsx::freezePane(wb, name, firstRow = TRUE)
-  openxlsx::setColWidths(wb, name, cols = seq_len(ncol(x)), widths = "auto")
-}
-add_sheet("upstream_audit", upstream_audit)
-add_sheet("TF_all174", all_tf)
-add_sheet("TF_candidates", candidate_rank)
-add_sheet("TF_ablation", ablation)
-add_sheet("TF_ablation_stability", ablation_stability)
-add_sheet("TF_external_alignment", candidate_alignment)
-add_sheet("axis_ranks", axis_eval)
-add_sheet("axis_external_alignment", axis_alignment)
-add_sheet("axis_topk", topk_external)
-add_sheet("sentinel_axis", sentinel_ranks)
-add_sheet("Stage7_performance", stage7_performance)
-add_sheet("Stage7_importance", stage7_attribution)
-add_sheet("claim_boundaries", claim_boundaries)
-openxlsx::saveWorkbook(wb, workbook_path, overwrite = TRUE)
+wb <- createWorkbook()
 
-script_archive_status <- "NOT_DETECTED"
-script_archive_path <- file.path(DIRS$methods, basename(EXPECTED_SCRIPT_FILE))
-if (!is.na(SCRIPT_FILE) && file.exists(SCRIPT_FILE)) {
-  ok <- file.copy(SCRIPT_FILE, script_archive_path, overwrite = TRUE)
-  if (isTRUE(ok) && file.exists(script_archive_path)) {
-    script_archive_status <- "ARCHIVED"
+write_sheet_safe(
+  wb,
+  "Disk_resume_provenance",
+  disk_resume_provenance
+)
+write_sheet_safe(
+  wb,
+  "Sample_metadata",
+  sample_meta
+)
+write_sheet_safe(
+  wb,
+  "Checkpoint_audit",
+  checkpoint_audit
+)
+write_sheet_safe(
+  wb,
+  "Checkpoint_validation",
+  qc_validation
+)
+write_sheet_safe(
+  wb,
+  "10x_mapping_inherited",
+  file_map
+)
+write_sheet_safe(
+  wb,
+  "QC_thresholds",
+  qc_thresholds
+)
+write_sheet_safe(
+  wb,
+  "QC_summary_inherited",
+  qc_summary
+)
+write_sheet_safe(
+  wb,
+  "Doublet_rates",
+  doublet_rates
+)
+write_sheet_safe(
+  wb,
+  "Cluster_annotation",
+  cluster_annotation
+)
+write_sheet_safe(
+  wb,
+  "Celltype_composition",
+  composition_complete
+)
+write_sheet_safe(
+  wb,
+  "Composition_stats",
+  composition_stats
+)
+write_sheet_safe(
+  wb,
+  "Signature_sizes",
+  signature_size_summary
+)
+write_sheet_safe(
+  wb,
+  "Signature_coverage",
+  signature_coverage
+)
+write_sheet_safe(
+  wb,
+  "Program_stats",
+  pseudobulk_program_stats
+)
+write_sheet_safe(
+  wb,
+  "PB_eligibility",
+  pseudobulk_eligibility
+)
+write_sheet_safe(
+  wb,
+  "PB_DE_summary",
+  pseudobulk_summary
+)
+write_sheet_safe(
+  wb,
+  "Stage2_Stage3_concordance",
+  stage2_stage3_concordance
+)
+write_sheet_safe(
+  wb,
+  "Macrophage_annotation",
+  macrophage_cluster_annotation
+)
+write_sheet_safe(
+  wb,
+  "Macrophage_score_stats",
+  macrophage_state_score_stats
+)
+
+saveWorkbook(
+  wb,
+  workbook_path,
+  overwrite = TRUE
+)
+
+parameter_table <- data.table(
+  parameter = c(
+    "Random seed",
+    "Minimum features per cell",
+    "Maximum features hard ceiling",
+    "Maximum counts hard ceiling",
+    "Maximum mitochondrial percentage hard ceiling",
+    "Adaptive QC multiplier",
+    "Adaptive QC upper quantile",
+    "Doublet method",
+    "Repair source checkpoint",
+    "Variable features",
+    "PCA dimensions",
+    "Major clustering resolution",
+    "Macrophage clustering resolution",
+    "Minimum cells per sample-cell type",
+    "Minimum samples per condition",
+    "Pseudobulk primary method",
+    "Pseudobulk sensitivity method",
+    "Signature tiers",
+    "Signature sizes",
+    "Primary signature size",
+    "Inferential unit"
+  ),
+  value = c(
+    "20260714",
+    as.character(MIN_FEATURES_HARD),
+    as.character(MAX_FEATURES_HARD),
+    as.character(MAX_COUNTS_HARD),
+    as.character(MAX_PERCENT_MT_HARD),
+    as.character(QC_MAD_MULTIPLIER),
+    as.character(QC_UPPER_QUANTILE),
+    paste0(
+      doublet_status,
+      "; per-sample scDblFinder; dbr.per1k=",
+      SCDOUBLETFINDER_DBR_PER_1K
+    ),
+    normalizePath(
+      SOURCE_CHECKPOINT,
+      winslash = "/",
+      mustWork = TRUE
+    ),
+    as.character(N_VARIABLE_FEATURES),
+    paste(dims_use, collapse = ","),
+    as.character(MAJOR_CLUSTER_RESOLUTION),
+    as.character(MACROPHAGE_CLUSTER_RESOLUTION),
+    as.character(MIN_CELLS_PER_SAMPLE_CELLTYPE),
+    as.character(MIN_SAMPLES_PER_CONDITION),
+    "edgeR quasi-likelihood pseudobulk",
+    "limma-voom pseudobulk",
+    paste(SIGNATURE_TIERS, collapse = "; "),
+    paste(SIGNATURE_SIZES, collapse = ", "),
+    as.character(PRIMARY_SIGNATURE_SIZE),
+    "Biological sample"
+  ),
+  rationale = c(
+    "Reproducibility",
+    "Remove low-complexity droplets",
+    "Prevent extreme high-feature cells while retaining cardiac cell diversity",
+    "Prevent extreme high-count cells",
+    "Remove strongly mitochondrial cells",
+    "Sample-specific outlier detection",
+    "Sample-specific outlier detection",
+    "Mandatory per-sample doublet classification; the repair stops if it fails",
+    "Reuses completed v2 post-QC cells and does not repeat raw 10x extraction or original QC",
+    "Major cell-state representation",
+    "Graph construction and UMAP",
+    "Major cardiac cell-type discovery",
+    "Macrophage-state discovery",
+    "Ensure adequate pseudobulk support",
+    "Require all three biological samples per condition",
+    "Primary count-based sample-level inference",
+    "Independent mean-variance modeling sensitivity analysis",
+    "Exclude weak directional-only Tier D genes from projected signatures",
+    "Signature-size sensitivity analysis",
+    "Primary visualization and localization score",
+    "Avoid cell-level pseudoreplication"
+  )
+)
+fwrite(
+  parameter_table,
+  file.path(
+    DIRS$methods,
+    "stage3_parameters_and_rationale.csv"
+  )
+)
+
+methods_text <- c(
+  "HFpEF Stage 3 FIXED v4: checkpoint-based doublet and annotation repair",
+  "",
+  "Input and biological design:",
+  "- This downstream continuation was executed after R had been closed and restarted.",
+  "- It loaded the annotated cardiac and macrophage Seurat objects saved by the first supplement.",
+  "- It did not repeat raw 10x extraction, QC, scDblFinder, clustering, annotation, pseudobulk inference, or macrophage subclustering.",
+  "- Six independent ventricular scRNA-seq samples: three HFpEF and three control mice.",
+  "- Sample identities and conditions were taken from the locked Stage 1 manifest.",
+  "- The repair loaded the completed v2 post-QC/pre-doublet Seurat checkpoint.",
+  "- Raw 10x matrices were not re-read and original per-sample QC was not repeated.",
+  "- Checkpoint sample-level cell counts were required to match the completed v2 QC summary.",
+  "",
+  "Quality control and doublets:",
+  "- The completed v2 sample-specific QC results were inherited from the validated checkpoint.",
+  "- scDblFinder was then run separately for each biological sample with a fixed random seed.",
+  "- dbr.per1k was set to 0.008 (0.8% per 1,000 captured cells) when supported by the installed scDblFinder version.",
+  "- Predicted doublets were removed before normalization, clustering, annotation, pseudobulk analysis, and program projection.",
+  "- scDblFinder failure is fatal in this repair version.",
+  "",
+  "Clustering and annotation:",
+  "- LogNormalize, 3,000 variable genes, percent-mitochondrial regression, PCA, graph clustering, and UMAP were repeated using singlets only.",
+  "- Cluster annotation combined prespecified marker-program scores with deterministic top-marker rules.",
+  "- The marker vocabulary explicitly included Schwann/glial, platelet/megakaryocyte, erythroid, cycling, and low-quality mitochondrial classes.",
+  "- Low-quality mitochondrial, cycling-unresolved, and unresolved clusters were excluded from inferential pseudobulk analyses.",
+  "- Annotation evidence, priority-marker hits, cluster QC, sample dominance, confidence, and manual-review flags were retained.",
+  "- Cluster marker tests are descriptive and do not constitute biological replication.",
+  "",
+  "Stage 2 program projection:",
+  "- Stage 2 Tier A-C genes supported by opposite disease/drug directions and DESeq2-edgeR directional agreement were used.",
+  "- Separate disease-up/drug-down and disease-down/drug-up components were constructed.",
+  "- Top50, Top100, Top150, and Top200 versions were evaluated for Ccr2-positive, Ccr2-negative, and cross-subset programs.",
+  "- The signed disease-like score was mean expression of disease-up genes minus mean expression of disease-down genes.",
+  "- No gene, including Nfkb1, was forced into a signature.",
+  "",
+  "Pseudobulk inference:",
+  "- Raw counts were summed within biological sample and major cell type.",
+  "- Cell types required at least 20 cells in each of all three samples per condition.",
+  "- edgeR quasi-likelihood was the primary differential-expression method.",
+  "- limma-voom was used as an independent sensitivity method.",
+  "- HFpEF versus control was the tested contrast.",
+  "",
+  "Sample-level program testing:",
+  "- Pseudobulk logCPM was standardized gene-wise across the six biological samples within each cell type.",
+  "- Program scores and HFpEF-control effect sizes were calculated at the sample level.",
+  "- Wilcoxon P values and Hedges g were reported as exploratory measures because n = 3 per condition.",
+  "",
+  "Macrophage analysis:",
+  "- Cells annotated as macrophage/monocyte were reclustered.",
+  "- Resident, Ccr2/monocyte-like, inflammatory, Spp1/Trem2 remodeling, interferon-responsive, antigen-presentation, and cycling marker programs were compared.",
+  "- State labels are discovery candidates requiring external and experimental validation.",
+  "",
+  "Claim boundary:",
+  "- Stage 3 localizes and tests concordance of Stage 2 programs in an independent cardiac dataset.",
+  "- It does not prove dapagliflozin exposure in GSE236585, direct drug targeting, transcription-factor causality, or cell-cell communication."
+)
+writeLines(
+  methods_text,
+  file.path(
+    DIRS$methods,
+    "stage3_methods_and_claim_boundaries.txt"
+  ),
+  useBytes = TRUE
+)
+
+capture.output(
+  sessionInfo(),
+  file = file.path(
+    DIRS$methods,
+    "sessionInfo.txt"
+  )
+)
+
+############################################################
+## 19. Completion checks and run status
+############################################################
+
+warnings_dt <- if (
+  length(warning_records) > 0L
+) {
+  rbindlist(
+    warning_records,
+    use.names = TRUE,
+    fill = TRUE
+  )
+} else {
+  data.table(
+    timestamp = character(),
+    category = character(),
+    item = character(),
+    message = character()
+  )
+}
+fwrite(
+  warnings_dt,
+  file.path(
+    DIRS$tables,
+    "37_warnings_and_nonfatal_issues.csv"
+  )
+)
+
+primary_coverage_check <- signature_coverage[
+  signature_name %in%
+    primary_signature_names
+]
+
+scientific_checks <- data.table(
+  check = c(
+    "Locked biological samples",
+    "Control samples",
+    "HFpEF samples",
+    "Checkpoint biological samples",
+    "Checkpoint matches completed v2 QC",
+    "Mandatory scDblFinder completed",
+    "Samples with valid doublet calls",
+    "Samples retaining >=100 singlets",
+    "Major cell types annotated",
+    "No missing major-cell-type labels",
+    "Excluded labels absent from eligible pseudobulk set",
+    "Eligible pseudobulk cell types",
+    "Pseudobulk DE results",
+    "Primary signature sets",
+    "Primary signatures with >=10 detected genes in each direction",
+    "Stage2-Stage3 concordance rows",
+    "Macrophage cells",
+    "Macrophage subclustering"
+  ),
+  observed = c(
+    nrow(sample_meta),
+    sum(sample_meta$condition == "Control"),
+    sum(sample_meta$condition == "HFpEF"),
+    nrow(qc_validation),
+    sum(
+      qc_validation$
+        checkpoint_matches_v2_QC
+    ),
+    as.integer(
+      doublet_status ==
+        "COMPLETED_REQUIRED"
+    ),
+    uniqueN(
+      doublet_calls$sample_accession
+    ),
+    sum(
+      post_doublet_counts$
+        retained_singlet_cells >=
+        100L
+    ),
+    uniqueN(cardiac$major_cell_type),
+    sum(
+      is.na(cardiac$major_cell_type) |
+        !nzchar(cardiac$major_cell_type)
+    ),
+    sum(
+      eligible_celltypes %in%
+        EXCLUDED_FROM_PSEUDOBULK
+    ),
+    length(eligible_celltypes),
+    nrow(pseudobulk_results),
+    length(primary_signature_names),
+    sum(
+      primary_coverage_check$
+        detected_up_genes >= 10L &
+        primary_coverage_check$
+          detected_down_genes >= 10L
+    ),
+    nrow(stage2_stage3_concordance),
+    length(macrophage_cells),
+    as.integer(
+      macrophage_status == "COMPLETED"
+    )
+  ),
+  expected = c(
+    6L,
+    3L,
+    3L,
+    6L,
+    6L,
+    1L,
+    6L,
+    6L,
+    5L,
+    0L,
+    0L,
+    3L,
+    1L,
+    3L,
+    3L,
+    1L,
+    200L,
+    1L
+  ),
+  comparison = c(
+    "equal",
+    "equal",
+    "equal",
+    "equal",
+    "equal",
+    "equal",
+    "equal",
+    "equal",
+    "at_least",
+    "equal",
+    "equal",
+    "at_least",
+    "at_least",
+    "equal",
+    "equal",
+    "at_least",
+    "at_least",
+    "equal"
+  )
+)
+scientific_checks[
+  ,
+  status := fcase(
+    comparison == "equal" &
+      observed == expected,
+    "PASS",
+
+    comparison == "at_least" &
+      observed >= expected,
+    "PASS",
+
+    default = "FAIL"
+  )
+]
+
+fwrite(
+  scientific_checks,
+  file.path(
+    DIRS$tables,
+    "38_scientific_completion_checks.csv"
+  )
+)
+
+script_copy_status <- "NOT_DETECTED"
+if (
+  length(SCRIPT_FILE) == 1L &&
+  !is.na(SCRIPT_FILE) &&
+  file.exists(SCRIPT_FILE)
+) {
+  methods_script <- file.path(
+    DIRS$methods,
+    "HFpEF_Stage3_GSE236585_v4_DISK_RESUME_AFTER_FIRST_SUPPLEMENT.R"
+  )
+  check_script <- file.path(
+    DIRS$check,
+    "HFpEF_Stage3_GSE236585_v4_DISK_RESUME_AFTER_FIRST_SUPPLEMENT.R"
+  )
+
+  copy_methods <- file.copy(
+    SCRIPT_FILE,
+    methods_script,
+    overwrite = TRUE
+  )
+  copy_check <- file.copy(
+    SCRIPT_FILE,
+    check_script,
+    overwrite = TRUE
+  )
+
+  script_copy_status <- if (
+    isTRUE(copy_methods) &&
+    isTRUE(copy_check)
+  ) {
+    "COPIED"
   } else {
-    script_archive_status <- "COPY_FAILED"
+    "COPY_FAILED"
   }
 }
 
-## Script archiving is a reproducibility/packaging item, not a scientific
-## validity criterion. Failure to detect a pasted interactive script is recorded
-## transparently but must not invalidate completed benchmark calculations.
-session_path <- file.path(DIRS$methods, "sessionInfo.txt")
-writeLines(capture.output(sessionInfo()), session_path, useBytes = TRUE)
-session_info_status <- if (
-  file.exists(session_path) && is.finite(file.info(session_path)$size) &&
-    file.info(session_path)$size > 0
-) "PASS" else "WARNING"
-
-reproducibility_checks <- data.table(
-  item = c(
-    "analysis_script_detected",
-    "analysis_script_archived",
-    "session_info_written",
-    "analysis_schema_recorded"
-  ),
-  status = c(
-    ifelse(!is.na(SCRIPT_FILE) && file.exists(SCRIPT_FILE), "PASS", "WARNING"),
-    ifelse(script_archive_status == "ARCHIVED", "PASS", "WARNING"),
-    session_info_status,
-    "PASS"
-  ),
-  detail = c(
-    ifelse(
-      !is.na(SCRIPT_FILE) && file.exists(SCRIPT_FILE),
-      SCRIPT_FILE,
-      paste0(
-        "The code was executed interactively or the source file was not ",
-        "detectable. This does not alter computed results."
-      )
-    ),
-    ifelse(
-      script_archive_status == "ARCHIVED",
-      script_archive_path,
-      paste0(
-        "No script copy was archived during this run. Archive the distributed ",
-        "FINAL_v3 script in the public code repository."
-      )
-    ),
-    session_path,
-    ANALYSIS_SCHEMA
-  )
-)
-write_csv_safe(
-  reproducibility_checks,
-  file.path(DIRS$tables, "19A_reproducibility_checks.csv")
-)
-
-completion_checks <- data.table(
-  check = c(
-    "upstream_stages_4_to_8_all_pass",
-    "stage8_external_evidence_not_used_in_discovery_rank",
-    "stage4_TF_universe_contains_at_least_150_TFs",
-    "frozen_candidate_set_is_exactly_three_TFs",
-    "Nfkb1_not_forced_in_stage4",
-    "Nfkb1_not_forced_in_stage5B",
-    "candidate_method_ranks_complete",
-    "leave_one_layer_out_scenarios_complete",
-    "candidate_external_alignment_complete",
-    "stage6_top_axes_sheet_loaded",
-    "at_least_10_frozen_axes_recovered_in_stage8",
-    "no_duplicate_external_axis_keys",
-    "axis_method_ranks_complete",
-    "axis_topk_metrics_complete",
-    "sentinel_TNF_axis_present_for_all_methods",
-    "stage7_AUC_and_permutation_metrics_imported",
-    "stage7_feature_importance_complete",
-    "all_figure_exports_valid",
-    "key_results_workbook_written"
-  ),
-  passed = c(
-    all(upstream_audit$failed_checks == 0L),
-    TRUE,
-    nrow(all_tf) >= 150L,
-    length(candidate_tfs) == 3L && setequal(candidate_tfs, c("Bhlhe40", "Nfkb1", "Rela")),
-    all(all_tf[tf_symbol == "Nfkb1", Nfkb1_forced] == FALSE),
-    all(candidate_rank[tf_symbol == "Nfkb1", Nfkb1_forced_stage5B] == FALSE),
-    nrow(candidate_method_long) == 3L * 7L && all(is.finite(candidate_method_long$discovery_rank)),
-    uniqueN(ablation$scenario) == length(ablation_definitions) &&
-      nrow(ablation) == 3L * length(ablation_definitions),
-    nrow(candidate_alignment) == 7L,
-    nrow(top_axes) > 0L,
-    nrow(axis_eval) >= 10L,
-    !anyDuplicated(s8_axis_summary$axis_key),
-    all(is.finite(axis_method_long$discovery_rank)),
-    nrow(topk_external) == uniqueN(axis_method_long$method) * length(TOPK_VALUES),
-    nrow(sentinel_ranks) == uniqueN(axis_method_long$method),
-    all(c(
-      "Primary pairwise leave-pair-out AUC",
-      "Primary sample-level AUC",
-      "Primary pairwise empirical permutation P",
-      "Primary sample-level empirical permutation P"
-    ) %in% stage7_performance$metric),
-    nrow(stage7_attribution) >= 5L && abs(sum(stage7_attribution$contribution_fraction) - 1) < 1e-8,
-    nrow(figure_audit_dt) >= 6L &&
-      all(figure_audit_dt$png_valid) &&
-      all(figure_audit_dt$pdf_valid) &&
-      all(figure_audit_dt$tiff_valid),
-    file.exists(workbook_path) && file.info(workbook_path)$size > 1000
-  )
-)
-completion_checks[, status := fifelse(passed, "PASS", "FAIL")]
-write_csv_safe(
-  completion_checks,
-  file.path(DIRS$tables, "19_scientific_completion_checks.csv")
-)
-
-failed_checks <- completion_checks[status == "FAIL", check]
-if (length(failed_checks) > 0L) {
-  stop(
-    "Revision benchmark calculations finished but completion checks failed:\n",
-    paste(failed_checks, collapse = "\n")
-  )
+END_TIME <- Sys.time()
+overall_status <- if (
+  all(scientific_checks$status == "PASS")
+) {
+  "COMPLETED_STAGE3_READY_FOR_REVIEW"
+} else {
+  "COMPLETED_STAGE3_REVIEW_REQUIRED"
 }
 
-end_time <- Sys.time()
 run_status <- data.table(
-  analysis = OUT_NAME,
-  analysis_schema = ANALYSIS_SCHEMA,
-  start_time = format(START_TIME, "%Y-%m-%d %H:%M:%S"),
-  end_time = format(end_time, "%Y-%m-%d %H:%M:%S"),
-  elapsed_minutes = as.numeric(difftime(end_time, START_TIME, units = "mins")),
-  TF_universe = nrow(all_tf),
-  frozen_TF_candidates = paste(candidate_tfs, collapse = ";"),
-  ablation_scenarios = uniqueN(ablation$scenario),
-  frozen_axes_evaluated = nrow(axis_eval),
-  sentinel_axis = SENTINEL_AXIS_KEY,
-  stage7_pairwise_AUC = stage7_performance[
-    metric == "Primary pairwise leave-pair-out AUC", value
-  ][1L],
-  stage7_sample_AUC = stage7_performance[
-    metric == "Primary sample-level AUC", value
-  ][1L],
-  scientific_checks_failed = 0L,
-  script_copy_status = script_archive_status,
-  reproducibility_warnings = sum(reproducibility_checks$status == "WARNING"),
-  overall_status = "COMPLETED_REVISION_BENCHMARK_ABLATION_READY_FOR_REVIEW"
+  stage = STAGE_NAME,
+  original_analysis_start_time =
+    ORIGINAL_ANALYSIS_START_TIME,
+  downstream_resume_start_time = format(
+    START_TIME,
+    "%Y-%m-%d %H:%M:%S"
+  ),
+  end_time = format(
+    END_TIME,
+    "%Y-%m-%d %H:%M:%S"
+  ),
+  elapsed_minutes = round(
+    as.numeric(
+      difftime(
+        END_TIME,
+        START_TIME,
+        units = "mins"
+      )
+    ),
+    2
+  ),
+  biological_samples = nrow(sample_meta),
+  retained_cells = ncol(cardiac),
+  retained_genes = nrow(cardiac),
+  major_clusters =
+    uniqueN(cardiac$seurat_clusters),
+  major_cell_types =
+    uniqueN(cardiac$major_cell_type),
+  eligible_pseudobulk_cell_types =
+    length(eligible_celltypes),
+  pseudobulk_tested_genes =
+    nrow(pseudobulk_results),
+  macrophage_cells =
+    length(macrophage_cells),
+  macrophage_status =
+    macrophage_status,
+  doublet_status =
+    doublet_status,
+  warnings = nrow(warnings_dt),
+  script_copy_status =
+    script_copy_status,
+  scientific_checks_failed =
+    sum(scientific_checks$status != "PASS"),
+  overall_status =
+    overall_status
 )
-write_csv_safe(run_status, file.path(DIRS$tables, "20_run_status.csv"))
 
-## Build a compact review package.
-review_files <- c(
-  file.path(DIRS$tables, c(
-    "01_upstream_status_audit.csv",
-    "02_TF_baseline_ranks_all174.csv",
-    "03_selected_TF_baseline_rank_comparison.csv",
-    "04_candidate_TF_method_ranks.csv",
-    "05_candidate_TF_ablation_scenarios.csv",
-    "06_candidate_TF_ablation_stability.csv",
-    "08_candidate_TF_external_alignment.csv",
-    "09_axis_method_ranks.csv",
-    "11_axis_external_alignment.csv",
-    "12_axis_topk_external_performance.csv",
-    "13_sentinel_axis_rank_comparison.csv",
-    "14_stage7_quantitative_metrics.csv",
-    "15_stage7_feature_importance.csv",
-    "16_figure_export_audit.csv",
-    "17_revision_claim_boundaries.csv",
-    "18_revision_benchmark_ablation_key_results.xlsx",
-    "19_scientific_completion_checks.csv",
-    "19A_reproducibility_checks.csv",
-    "20_run_status.csv"
-  )),
-  list.files(DIRS$figures, full.names = TRUE),
-  list.files(DIRS$source, full.names = TRUE),
-  list.files(DIRS$methods, full.names = TRUE),
-  LOG_FILE
+fwrite(
+  run_status,
+  file.path(
+    DIRS$tables,
+    "39_stage3_run_status.csv"
+  )
 )
-review_files <- unique(review_files[file.exists(review_files)])
-for (src in review_files) {
-  target <- file.path(DIRS$check, basename(src))
-  file.copy(src, target, overwrite = TRUE)
+
+readme <- c(
+  "HFpEF Reanalysis Project - Stage 3 FIXED v4 PATCH",
+  "GSE236585 checkpoint-based doublet and annotation repair",
+  "",
+  paste0(
+    "Overall status: ",
+    overall_status
+  ),
+  paste0(
+    "Biological samples: ",
+    nrow(sample_meta)
+  ),
+  paste0(
+    "Retained cells: ",
+    ncol(cardiac)
+  ),
+  paste0(
+    "Major cell types: ",
+    uniqueN(cardiac$major_cell_type)
+  ),
+  paste0(
+    "Eligible pseudobulk cell types: ",
+    length(eligible_celltypes)
+  ),
+  paste0(
+    "Macrophage cells: ",
+    length(macrophage_cells)
+  ),
+  paste0(
+    "Doublet analysis: ",
+    doublet_status
+  ),
+  paste0(
+    "Script snapshot: ",
+    script_copy_status
+  ),
+  "",
+  "Repair provenance:",
+  "- R was closed after the first supplement stopped at the first line of Section 17.",
+  "- This continuation independently reloaded the saved cardiac and macrophage Seurat objects from disk.",
+  "- No completed upstream analysis was repeated.",
+  "- Loaded the completed Stage 3 v2 post-QC/pre-doublet checkpoint.",
+  "- Did not re-read raw 10x matrices or repeat original QC.",
+  "- Recomputed all downstream results after mandatory doublet removal and revised annotation.",
+  "",
+  "Primary interpretation boundary:",
+  "- Cells are descriptive observations; biological samples are the inferential units.",
+  "- Stage 2 signatures are projected without forcing Nfkb1 or a fixed original candidate panel.",
+  "- GSE236585 contains no dapagliflozin exposure and therefore tests disease-program localization and concordance, not drug response.",
+  "",
+  "Upload the v4 PATCH CHECK package for review before Stage 4."
+)
+writeLines(
+  readme,
+  file.path(
+    OUT_DIR,
+    "README_stage3.txt"
+  ),
+  useBytes = TRUE
+)
+
+############################################################
+## 20. Compact CHECK package
+############################################################
+
+## Compact pseudobulk program tables.
+write_csv_safe(
+  pseudobulk_program_stats[
+    signature_name %in%
+      primary_signature_names
+  ],
+  file.path(
+    DIRS$check,
+    "PRIMARY_program_localization_statistics.csv"
+  )
+)
+write_csv_safe(
+  top_pseudobulk_de,
+  file.path(
+    DIRS$check,
+    "TOP_pseudobulk_DE_by_celltype.csv"
+  )
+)
+write_csv_safe(
+  stage2_stage3_concordance,
+  file.path(
+    DIRS$check,
+    "Stage2_Stage3_concordance.csv"
+  )
+)
+write_csv_safe(
+  macrophage_cluster_annotation,
+  file.path(
+    DIRS$check,
+    "Macrophage_cluster_annotation.csv"
+  )
+)
+write_csv_safe(
+  macrophage_state_score_stats[
+    signature_name %in%
+      primary_signature_names
+  ],
+  file.path(
+    DIRS$check,
+    "Macrophage_primary_program_statistics.csv"
+  )
+)
+
+review_files <- c(
+  file.path(
+    DIRS$tables,
+    "40_disk_resume_provenance.csv"
+  ),
+  file.path(
+    DIRS$tables,
+    "01_locked_GSE236585_sample_metadata.csv"
+  ),
+  file.path(
+    DIRS$tables,
+    "03_stage2_signature_size_summary.csv"
+  ),
+  file.path(
+    DIRS$tables,
+    "04A_checkpoint_resume_audit.csv"
+  ),
+  file.path(
+    DIRS$tables,
+    "04_GSE236585_10x_file_mapping_and_dimensions.csv"
+  ),
+  file.path(
+    DIRS$tables,
+    "05_sample_specific_QC_thresholds.csv"
+  ),
+  file.path(
+    DIRS$tables,
+    "06_sample_QC_retention_summary.csv"
+  ),
+  file.path(
+    DIRS$tables,
+    "06A_checkpoint_cell_count_validation.csv"
+  ),
+  file.path(
+    DIRS$tables,
+    "07A_scDblFinder_class_summary.csv"
+  ),
+  file.path(
+    DIRS$tables,
+    "07B_scDblFinder_rate_summary.csv"
+  ),
+  file.path(
+    DIRS$tables,
+    "11_major_celltype_cluster_annotation.csv"
+  ),
+  file.path(
+    DIRS$tables,
+    "14A_cluster_priority_marker_evidence.csv"
+  ),
+  file.path(
+    DIRS$tables,
+    "14B_cluster_QC_and_sample_balance.csv"
+  ),
+  file.path(
+    DIRS$tables,
+    "14C_known_misannotation_class_audit.csv"
+  ),
+  file.path(
+    DIRS$tables,
+    "14_top_cluster_markers_for_review.csv"
+  ),
+  file.path(
+    DIRS$tables,
+    "15_celltype_composition_by_sample.csv"
+  ),
+  file.path(
+    DIRS$tables,
+    "16_celltype_composition_exploratory_statistics.csv"
+  ),
+  file.path(
+    DIRS$tables,
+    "17_signature_gene_coverage_in_GSE236585.csv"
+  ),
+  file.path(
+    DIRS$tables,
+    "21_major_celltype_pseudobulk_eligibility.csv"
+  ),
+  file.path(
+    DIRS$tables,
+    "23_major_celltype_pseudobulk_DE_summary.csv"
+  ),
+  file.path(
+    DIRS$tables,
+    "27_pseudobulk_program_statistics.csv"
+  ),
+  file.path(
+    DIRS$tables,
+    "28_stage2_stage3_gene_level_concordance.csv"
+  ),
+  file.path(
+    DIRS$tables,
+    "30_macrophage_cluster_annotation.csv"
+  ),
+  file.path(
+    DIRS$tables,
+    "33_macrophage_state_composition_by_sample.csv"
+  ),
+  file.path(
+    DIRS$tables,
+    "35_macrophage_state_score_statistics.csv"
+  ),
+  workbook_path,
+  file.path(
+    DIRS$tables,
+    "37_warnings_and_nonfatal_issues.csv"
+  ),
+  file.path(
+    DIRS$tables,
+    "38_scientific_completion_checks.csv"
+  ),
+  file.path(
+    DIRS$tables,
+    "39_stage3_run_status.csv"
+  ),
+  file.path(
+    DIRS$methods,
+    "stage3_parameters_and_rationale.csv"
+  ),
+  file.path(
+    DIRS$methods,
+    "stage3_methods_and_claim_boundaries.txt"
+  ),
+  file.path(
+    DIRS$methods,
+    "sessionInfo.txt"
+  ),
+  file.path(
+    OUT_DIR,
+    "README_stage3.txt"
+  ),
+  LOG_FILE,
+  list.files(
+    DIRS$figures,
+    pattern = "\\.png$",
+    full.names = TRUE
+  )
+)
+review_files <- unique(
+  review_files[
+    file.exists(review_files)
+  ]
+)
+
+for (f in review_files) {
+  target <- file.path(
+    DIRS$check,
+    basename(f)
+  )
+
+  if (
+    normalizePath(
+      f,
+      winslash = "/",
+      mustWork = FALSE
+    ) !=
+      normalizePath(
+        target,
+        winslash = "/",
+        mustWork = FALSE
+      )
+  ) {
+    file.copy(
+      f,
+      target,
+      overwrite = TRUE
+    )
+  }
 }
 
-manifest <- data.table(
-  filename = list.files(DIRS$check, full.names = FALSE),
-  path = list.files(DIRS$check, full.names = TRUE)
+check_files <- list.files(
+  DIRS$check,
+  full.names = TRUE
 )
-manifest[, size_bytes := file.info(path)$size]
-manifest[, md5 := unname(tools::md5sum(path))]
-manifest[, path := NULL]
-write_csv_safe(manifest, file.path(DIRS$check, "CHECK_package_file_manifest.csv"))
+check_manifest <- data.table(
+  filename = basename(check_files),
+  size_bytes = as.numeric(
+    file.info(check_files)$size
+  )
+)
+check_manifest[
+  ,
+  sha256 := vapply(
+    check_files,
+    function(f) {
+      digest::digest(
+        file = f,
+        algo = "sha256",
+        serialize = FALSE
+      )
+    },
+    character(1)
+  )
+]
+fwrite(
+  check_manifest,
+  file.path(
+    DIRS$check,
+    "CHECK_package_file_manifest.csv"
+  )
+)
 
-if (file.exists(CHECK_ZIP)) unlink(CHECK_ZIP, force = TRUE)
+if (file.exists(CHECK_ZIP)) {
+  unlink(
+    CHECK_ZIP,
+    force = TRUE
+  )
+}
 zip::zipr(
   zipfile = CHECK_ZIP,
-  files = list.files(DIRS$check, full.names = TRUE),
+  files = list.files(
+    DIRS$check,
+    full.names = TRUE
+  ),
   root = DIRS$check
 )
-if (!file.exists(CHECK_ZIP) || file.info(CHECK_ZIP)$size <= 1000) {
-  stop("CHECK zip was not created correctly: ", CHECK_ZIP)
-}
 
-if (any(reproducibility_checks$status == "WARNING")) {
-  log_msg(
-    "Reproducibility warning(s) recorded: ",
-    paste(
-      reproducibility_checks[status == "WARNING", item],
-      collapse = "; "
-    ),
-    ". Scientific completion remains PASS.",
-    level = "WARN"
-  )
-}
-log_msg("Revision benchmark and ablation completed successfully.")
-log_msg("Status: ", run_status$overall_status)
-log_msg("CHECK package: ", CHECK_ZIP)
+log_msg("Stage 3 disk-resume downstream analysis finished.")
+log_msg("Overall status: ", overall_status)
+log_msg(
+  "Retained cells: ",
+  ncol(cardiac)
+)
+log_msg(
+  "Major cell types: ",
+  uniqueN(cardiac$major_cell_type)
+)
+log_msg(
+  "Eligible pseudobulk cell types: ",
+  length(eligible_celltypes)
+)
+log_msg(
+  "Macrophage cells: ",
+  length(macrophage_cells)
+)
+log_msg(
+  "CHECK package: ",
+  CHECK_ZIP
+)
 
 cat("\n============================================================\n")
-cat("Revision benchmark and ablation completed.\n")
-cat("Status: ", run_status$overall_status, "\n", sep = "")
+cat("HFpEF Stage 3 FIXED v4 disk-resume continuation completed\n")
+cat("Status: ", overall_status, "\n", sep = "")
 cat("Output: ", OUT_DIR, "\n", sep = "")
 cat("CHECK: ", CHECK_ZIP, "\n", sep = "")
+cat("Upload the v4 PATCH CHECK package for review before Stage 4.\n")
 cat("============================================================\n")

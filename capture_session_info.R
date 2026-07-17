@@ -1,16 +1,30 @@
-# Data and resource manifest
+output_file <- file.path("environment", "sessionInfo.txt")
+dir.create(dirname(output_file), recursive = TRUE, showWarnings = FALSE)
 
-Raw expression matrices and large intermediate objects are not redistributed. Download the public resources under their original repository terms and place them under the separate local project root defined by `HFPEF_PROJECT_DIR`.
+sink(output_file)
+cat("Captured:", format(Sys.time(), "%Y-%m-%d %H:%M:%S %Z"), "
 
-| Resource | Role | Boundary |
-|---|---|---|
-| GSE237156 | Stage 2 pharmacotranscriptomic discovery | Sorted CCR2+ and CCR2− macrophages; two replicates per experimental cell. |
-| GSE236585 | Primary cardiac single-cell context | Biological sample, not cell, is the inferential unit. |
-| GSE236584 | Matched whole-heart bulk support | Same study as GSE236585; not an independent cohort. |
-| GSE208425 | Related metabolic immune-cell context | Contextual support only. |
-| GSE245034 | External bulk treatment evaluation | Same study system as GSE249412. |
-| GSE249412 | Cell-type-resolved treatment evaluation | Not counted as a second independent cohort relative to GSE245034. |
-| SCP3342 | Independent human myocardial single-nucleus evaluation | 19 HFpEF and 24 control donors. |
-| NicheNet-v2 mouse resources | Stage 6 ligand–target and ligand–receptor prior knowledge | Fixed Zenodo record 7074291; resource hashes are checked in the script. |
-
-Expected filenames, sample inclusion rules, contrasts, parameters, and random seeds are encoded in the staged scripts and manuscript Supplementary Material.
+")
+print(sessionInfo())
+cat("
+Installed package versions:
+")
+packages <- sort(unique(c(
+  "AnnotationDbi", "AUCell", "BiocManager", "BiocParallel", "data.table",
+  "decoupleR", "DESeq2", "digest", "dorothea", "edgeR", "fgsea",
+  "ggplot2", "ggrepel", "hdf5r", "limma", "Matrix", "matrixStats",
+  "msigdbr", "openxlsx", "org.Mm.eg.db", "patchwork", "pheatmap",
+  "scales", "scDblFinder", "Seurat", "SeuratObject",
+  "SingleCellExperiment", "SummarizedExperiment", "writexl", "zip"
+)))
+for (package in packages) {
+  version <- if (requireNamespace(package, quietly = TRUE)) {
+    as.character(utils::packageVersion(package))
+  } else {
+    "NOT_INSTALLED"
+  }
+  cat(sprintf("%-28s %s
+", package, version))
+}
+sink()
+message("Wrote ", normalizePath(output_file, winslash = "/", mustWork = FALSE))

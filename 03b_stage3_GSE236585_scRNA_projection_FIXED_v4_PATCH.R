@@ -5,59 +5,55 @@
 ##   Raw public data are not bundled with this repository.
 ##
 ## HFpEF Reanalysis Project
-## Stage 2 FIXED v2 REPLACE
-## GSE237156 drug-opposed macrophage transcriptomic discovery (clean replacement run)
+## Stage 3 FIXED v4 PATCH (public repository corrected copy)
+## Resume from the completed Stage 3 v2 post-QC checkpoint
+## Public-copy correction: repaired the missing line break before condition_palette.
 ##
-## FIXED v2 changes:
-##   - Deletes the incomplete FIXED_v1 output directory and CHECK archive.
-##   - Fixes the GSEA ordering error caused by setorder(..., -abs(stat)).
-##   - Uses an explicit abs_stat column before ordering ranked genes.
-##   - Prefers mouse-native MSigDB MM/MH Hallmark gene sets.
-##   - Makes optional GSEA nonfatal to the core transcriptomic analysis.
-##   - Uses DESeq2 normal-prior shrinkage without optional ashr compilation.
+## This patch DOES NOT:
+##   - re-extract GSE236585_RAW.tar;
+##   - re-read the six 10x matrices;
+##   - repeat the original per-sample QC;
+##   - delete Stage 1, Stage 2, or Stage 3 v2.
 ##
-## Project root:
-##   <HFPEF_PROJECT_DIR>
+## This patch DOES:
+##   1) load the v2 post-QC/pre-doublet Seurat checkpoint;
+##   2) run scDblFinder correctly and separately by biological sample;
+##   3) remove predicted doublets;
+##   4) repeat normalization, PCA, clustering, and UMAP;
+##   5) replace forced marker-score annotation with deterministic,
+##      auditable marker rules plus expanded cardiac cell classes;
+##   6) explicitly identify Schwann/glial, platelet, erythroid,
+##      cycling-unresolved, low-quality mitochondrial, and unresolved
+##      clusters instead of forcing them into unrelated cell types;
+##   7) rebuild all pseudobulk, Stage 2 projection, concordance,
+##      macrophage-state, figure, workbook, and CHECK outputs.
 ##
-## Read-only input:
-##   <HFPEF_PROJECT_DIR>/0.GEO/GSE237156_RAW.tar
-##
-## Locked metadata:
+## Source checkpoint:
 ##   <HFPEF_PROJECT_DIR>/
-##   01_stage1_metadata_lock_FIXED_v3/01_tables/
-##   01_locked_sample_manifest.csv
+##   03_stage3_GSE236585_scRNA_projection_FIXED_v2/
+##   02_objects/CHECKPOINT_GSE236585_post_QC_pre_doublet.rds
 ##
-## Output:
+## New output:
 ##   <HFPEF_PROJECT_DIR>/
-##   02_stage2_GSE237156_drug_opposed_discovery_FIXED_v2
+##   03_stage3_GSE236585_scRNA_projection_FIXED_v4_PATCH
 ##
-## CHECK package:
+## New CHECK package:
 ##   <HFPEF_PROJECT_DIR>/
-##   02_stage2_GSE237156_drug_opposed_discovery_FIXED_v2_CHECK.zip
+##   03_stage3_GSE236585_scRNA_projection_FIXED_v4_PATCH_CHECK.zip
 ##
-## Primary objectives:
-##   1) Reconstruct the 16-sample RSEM expected-count matrix.
-##   2) Validate the locked 2 x 2 x 2 design:
-##      Ccr2 status x diet x dapagliflozin.
-##   3) Perform DESeq2 primary differential-expression analysis.
-##   4) Perform edgeR quasi-likelihood sensitivity analysis.
-##   5) Rank all genes by continuous drug-opposition evidence without
-##      preselecting Nfkb1 or a fixed candidate-gene list.
-##   6) Quantify method agreement and cross-subset reproducibility.
-##   7) Run transparent factorial LRT sensitivity analyses.
-##   8) Optionally evaluate Hallmark pathway opposition by GSEA.
-##
-## Scientific boundary:
-##   - n = 2 biological samples per experimental cell.
-##   - Results are hypothesis-generating and effect-size oriented.
-##   - Drug-opposed expression does not prove direct drug-target binding,
-##     transcription-factor causality, or therapeutic efficacy.
-##   - No candidate gene is forced into the ranked results.
+## Statistical boundary:
+##   - Biological sample, not cell, is the inferential unit.
+##   - Cell-level plots and cluster markers are descriptive.
+##   - Pseudobulk and sample-level scores are used for comparisons.
+##   - n = 3 HFpEF and n = 3 control samples.
+##   - GSE236585 contains no dapagliflozin treatment.
+##   - Stage 2 projection tests disease-program localization and
+##     cross-dataset concordance, not direct drug response.
 ##
 ## Recommended run:
 ##   source(
 ##     "<HFPEF_PROJECT_DIR>/
-##      HFpEF_Stage2_GSE237156_Drug_Opposed_Discovery_FIXED_v2_REPLACE.R",
+##      HFpEF_Stage3_GSE236585_scRNA_Projection_FIXED_v4_PATCH.R",
 ##     encoding = "UTF-8"
 ##   )
 ############################################################
@@ -67,6 +63,7 @@ gc()
 options(stringsAsFactors = FALSE)
 options(warn = 1)
 options(encoding = "UTF-8")
+options(future.globals.maxSize = 12 * 1024^3)
 set.seed(20260714)
 
 ############################################################
@@ -85,49 +82,156 @@ PROJECT_DIR <- normalizePath(
   winslash = "/",
   mustWork = TRUE
 )
-DATA_DIR <- file.path(PROJECT_DIR, "0.GEO")
 
-STAGE1_LOCK_DIR <- file.path(
+STAGE1_DIR <- file.path(
   PROJECT_DIR,
   "01_stage1_metadata_lock_FIXED_v3"
 )
-LOCKED_MANIFEST_FILE <- file.path(
-  STAGE1_LOCK_DIR,
+STAGE1_MANIFEST <- file.path(
+  STAGE1_DIR,
   "01_tables",
   "01_locked_sample_manifest.csv"
 )
-RAW_TAR_FILE <- file.path(DATA_DIR, "GSE237156_RAW.tar")
 
-## The prior incomplete Stage 2 output is intentionally deleted and replaced.
-OLD_STAGE_NAME <- "02_stage2_GSE237156_drug_opposed_discovery_FIXED_v1"
-OLD_OUT_DIR <- file.path(PROJECT_DIR, OLD_STAGE_NAME)
-OLD_CHECK_ZIP <- file.path(
+STAGE2_DIR <- file.path(
   PROJECT_DIR,
-  paste0(OLD_STAGE_NAME, "_CHECK.zip")
+  "02_stage2_GSE237156_drug_opposed_discovery_FIXED_v2"
+)
+STAGE2_STATUS_FILE <- file.path(
+  STAGE2_DIR,
+  "01_tables",
+  "24_stage2_run_status.csv"
+)
+STAGE2_POS_FILE <- file.path(
+  STAGE2_DIR,
+  "01_tables",
+  "13_opposition_rank_Ccr2_positive.csv.gz"
+)
+STAGE2_NEG_FILE <- file.path(
+  STAGE2_DIR,
+  "01_tables",
+  "14_opposition_rank_Ccr2_negative.csv.gz"
+)
+STAGE2_CROSS_FILE <- file.path(
+  STAGE2_DIR,
+  "01_tables",
+  "16_cross_subset_consensus_ranking.csv.gz"
 )
 
-STAGE_NAME <- "02_stage2_GSE237156_drug_opposed_discovery_FIXED_v2"
+SOURCE_STAGE3_V2_DIR <- file.path(
+  PROJECT_DIR,
+  "03_stage3_GSE236585_scRNA_projection_FIXED_v2"
+)
+SOURCE_CHECKPOINT <- file.path(
+  SOURCE_STAGE3_V2_DIR,
+  "02_objects",
+  "CHECKPOINT_GSE236585_post_QC_pre_doublet.rds"
+)
+SOURCE_FILE_MAP <- file.path(
+  SOURCE_STAGE3_V2_DIR,
+  "01_tables",
+  "04_GSE236585_10x_file_mapping_and_dimensions.csv"
+)
+SOURCE_QC_THRESHOLDS <- file.path(
+  SOURCE_STAGE3_V2_DIR,
+  "01_tables",
+  "05_sample_specific_QC_thresholds.csv"
+)
+SOURCE_QC_SUMMARY <- file.path(
+  SOURCE_STAGE3_V2_DIR,
+  "01_tables",
+  "06_sample_QC_retention_summary.csv"
+)
+
+FAILED_V3_PATCH_NAME <- "03_stage3_GSE236585_scRNA_projection_FIXED_v3_PATCH"
+FAILED_V3_PATCH_DIR <- file.path(
+  PROJECT_DIR,
+  FAILED_V3_PATCH_NAME
+)
+FAILED_V3_PATCH_ZIP <- file.path(
+  PROJECT_DIR,
+  paste0(FAILED_V3_PATCH_NAME, "_CHECK.zip")
+)
+
+STAGE_NAME <- "03_stage3_GSE236585_scRNA_projection_FIXED_v4_PATCH"
 OUT_DIR <- file.path(PROJECT_DIR, STAGE_NAME)
 CHECK_ZIP <- file.path(
   PROJECT_DIR,
   paste0(STAGE_NAME, "_CHECK.zip")
 )
 
-REPLACE_PREVIOUS_STAGE2 <- TRUE
-RUN_OPTIONAL_GSEA <- TRUE
+EXPECTED_SCRIPT_FILE <- file.path(PROJECT_DIR, "03b_stage3_GSE236585_scRNA_projection_FIXED_v4_PATCH.R")
 
-## Filtering and reporting parameters.
-MIN_COUNT <- 10L
-MIN_SAMPLES_WITH_MIN_COUNT <- 2L
-DESEQ_ALPHA <- 0.10
+REPLACE_EXISTING_V4_PATCH <- TRUE
+
+## scDblFinder is mandatory in the repair run.
+## scDblFinder expects dbr.per1k as a proportion between 0 and 1.
+## The standard 10x default is 0.008, meaning approximately 0.8% per
+## additional 1,000 captured cells.
+SCDOUBLETFINDER_DBR_PER_1K <- 0.008
+DOUBLETRATE_WARNING_THRESHOLD <- 0.15
+DOUBLETRATE_FATAL_THRESHOLD <- 0.25
+
+if (
+  length(SCDOUBLETFINDER_DBR_PER_1K) != 1L ||
+  !is.numeric(SCDOUBLETFINDER_DBR_PER_1K) ||
+  !is.finite(SCDOUBLETFINDER_DBR_PER_1K) ||
+  SCDOUBLETFINDER_DBR_PER_1K <= 0 ||
+  SCDOUBLETFINDER_DBR_PER_1K >= 1
+) {
+  stop(
+    "SCDOUBLETFINDER_DBR_PER_1K must be a finite proportion ",
+    "strictly between 0 and 1. The intended value is 0.008."
+  )
+}
+
+## Inherited v2 QC parameters are recorded for provenance only.
+## The repair does not execute the original QC again.
+MIN_FEATURES_HARD <- 200L
+MAX_FEATURES_HARD <- 9000L
+MAX_COUNTS_HARD <- 120000L
+MAX_PERCENT_MT_HARD <- 25
+QC_MAD_MULTIPLIER <- 4
+QC_UPPER_QUANTILE <- 0.995
+
+## Clustering parameters.
+N_VARIABLE_FEATURES <- 3000L
+N_PCS <- 40L
+DIMS_USE <- 1:30
+MAJOR_CLUSTER_RESOLUTION <- 0.55
+MACROPHAGE_CLUSTER_RESOLUTION <- 0.65
+MAX_CELLS_PER_CLUSTER_MARKER_TEST <- 3000L
+
+## Pseudobulk eligibility.
+MIN_CELLS_PER_SAMPLE_CELLTYPE <- 20L
+MIN_SAMPLES_PER_CONDITION <- 3L
+PSEUDOBULK_MIN_COUNT <- 10L
+EXCLUDED_FROM_PSEUDOBULK <- c(
+  "Low_quality_mitochondrial",
+  "Cycling_unresolved",
+  "Unresolved"
+)
+
+## Stage 2 signature construction.
+SIGNATURE_SIZES <- c(50L, 100L, 150L, 200L)
+PRIMARY_SIGNATURE_SIZE <- 150L
+SIGNATURE_TIERS <- c(
+  "Tier_A_both_DESeq2_FDR_and_edgeR_direction",
+  "Tier_B_one_DESeq2_FDR_effect_supported",
+  "Tier_C_effect_and_method_supported"
+)
+
+## Reporting.
 FORMAL_FDR <- 0.05
 EXPLORATORY_FDR <- 0.10
-MIN_ABS_LFC_FOR_TIER <- 0.50
-TOP_HEATMAP_GENES <- 40L
-TOP_LABEL_GENES <- 12L
-TOP_CHECK_GENES <- 500L
+TOP_DE_GENES_PER_CELLTYPE_CHECK <- 100L
+TOP_MARKERS_PER_CLUSTER_CHECK <- 20L
+TOP_MARKERS_FOR_ANNOTATION <- 50L
 
-## The script snapshot is useful but is not a scientific pass criterion.
+############################################################
+## 1. Script detection, validation, and output setup
+############################################################
+
 detect_script_file <- function() {
   candidates <- character()
 
@@ -158,7 +262,9 @@ detect_script_file <- function() {
   candidates <- unique(candidates)
   candidates <- candidates[file.exists(candidates)]
 
-  if (length(candidates) == 0L) return(NA_character_)
+  if (length(candidates) == 0L) {
+    return(NA_character_)
+  }
 
   normalizePath(
     candidates[1L],
@@ -167,16 +273,32 @@ detect_script_file <- function() {
   )
 }
 SCRIPT_FILE <- detect_script_file()
-
-############################################################
-## 1. Output setup and logging
-############################################################
+if (
+  (
+    length(SCRIPT_FILE) != 1L ||
+    is.na(SCRIPT_FILE) ||
+    !file.exists(SCRIPT_FILE)
+  ) &&
+  file.exists(EXPECTED_SCRIPT_FILE)
+) {
+  SCRIPT_FILE <- normalizePath(
+    EXPECTED_SCRIPT_FILE,
+    winslash = "/",
+    mustWork = TRUE
+  )
+}
 
 required_inputs <- c(
   PROJECT_DIR,
-  DATA_DIR,
-  LOCKED_MANIFEST_FILE,
-  RAW_TAR_FILE
+  STAGE1_MANIFEST,
+  STAGE2_STATUS_FILE,
+  STAGE2_POS_FILE,
+  STAGE2_NEG_FILE,
+  STAGE2_CROSS_FILE,
+  SOURCE_CHECKPOINT,
+  SOURCE_FILE_MAP,
+  SOURCE_QC_THRESHOLDS,
+  SOURCE_QC_SUMMARY
 )
 missing_inputs <- required_inputs[!file.exists(required_inputs)]
 if (length(missing_inputs) > 0L) {
@@ -186,18 +308,33 @@ if (length(missing_inputs) > 0L) {
   )
 }
 
-replacement_records <- data.frame(
+stage2_status <- data.table::fread(
+  STAGE2_STATUS_FILE,
+  encoding = "UTF-8"
+)
+if (
+  !"overall_status" %in% names(stage2_status) ||
+  stage2_status$overall_status[1L] !=
+    "COMPLETED_STAGE2_READY_FOR_REVIEW"
+) {
+  stop(
+    "Stage 2 is not locked as COMPLETED_STAGE2_READY_FOR_REVIEW. ",
+    "Review 24_stage2_run_status.csv before the Stage 3 repair."
+  )
+}
+
+replacement_audit <- data.frame(
   path = c(
-    OLD_OUT_DIR,
-    OLD_CHECK_ZIP,
+    FAILED_V3_PATCH_DIR,
+    FAILED_V3_PATCH_ZIP,
     OUT_DIR,
     CHECK_ZIP
   ),
   path_type = c(
-    "prior_incomplete_output_directory",
-    "prior_incomplete_check_zip",
-    "current_v2_output_directory",
-    "current_v2_check_zip"
+    "failed_stage3_v3_patch_output_directory",
+    "failed_stage3_v3_patch_check_zip",
+    "stage3_v4_patch_output_directory",
+    "stage3_v4_patch_check_zip"
   ),
   existed_before = FALSE,
   deletion_attempted = FALSE,
@@ -205,43 +342,42 @@ replacement_records <- data.frame(
   stringsAsFactors = FALSE
 )
 
-if (REPLACE_PREVIOUS_STAGE2) {
-  for (i in seq_len(nrow(replacement_records))) {
-    target <- replacement_records$path[i]
+if (REPLACE_EXISTING_V4_PATCH) {
+  for (i in seq_len(nrow(replacement_audit))) {
+    target <- replacement_audit$path[i]
     existed <- dir.exists(target) || file.exists(target)
-    replacement_records$existed_before[i] <- existed
+    replacement_audit$existed_before[i] <- existed
 
     if (existed) {
-      replacement_records$deletion_attempted[i] <- TRUE
+      replacement_audit$deletion_attempted[i] <- TRUE
       unlink(
         target,
         recursive = dir.exists(target),
         force = TRUE
       )
-      replacement_records$deletion_succeeded[i] <- !(
+      replacement_audit$deletion_succeeded[i] <- !(
         dir.exists(target) || file.exists(target)
       )
-      if (!replacement_records$deletion_succeeded[i]) {
+      if (!replacement_audit$deletion_succeeded[i]) {
         stop(
-          "Failed to delete previous Stage 2 path:\n",
+          "Failed to remove previous v4 patch path:\n",
           target
         )
       }
     } else {
-      replacement_records$deletion_succeeded[i] <- TRUE
+      replacement_audit$deletion_succeeded[i] <- TRUE
     }
   }
-} else {
-  if (
-    dir.exists(OLD_OUT_DIR) ||
-    file.exists(OLD_CHECK_ZIP) ||
-    dir.exists(OUT_DIR) ||
-    file.exists(CHECK_ZIP)
-  ) {
-    stop(
-      "Existing Stage 2 output was detected while replacement is disabled."
-    )
-  }
+} else if (
+  dir.exists(FAILED_V3_PATCH_DIR) ||
+  file.exists(FAILED_V3_PATCH_ZIP) ||
+  dir.exists(OUT_DIR) ||
+  file.exists(CHECK_ZIP)
+) {
+  stop(
+    "Existing failed v3 or current v4 patch output was detected ",
+    "while replacement is disabled."
+  )
 }
 
 DIRS <- list(
@@ -251,15 +387,34 @@ DIRS <- list(
   figures = file.path(OUT_DIR, "03_figures"),
   source = file.path(OUT_DIR, "04_source_data"),
   methods = file.path(OUT_DIR, "05_methods"),
-  check = file.path(OUT_DIR, "06_review_check"),
-  extracted = file.path(OUT_DIR, "07_extracted_RSEM")
+  check = file.path(OUT_DIR, "06_review_check")
 )
 for (d in c(OUT_DIR, unlist(DIRS, use.names = FALSE))) {
-  dir.create(d, recursive = TRUE, showWarnings = FALSE)
+  dir.create(
+    d,
+    recursive = TRUE,
+    showWarnings = FALSE
+  )
 }
 
-LOG_FILE <- file.path(DIRS$logs, "stage2_GSE237156.log")
-WARN_FILE <- file.path(DIRS$logs, "stage2_warnings.log")
+write.csv(
+  replacement_audit,
+  file.path(
+    DIRS$logs,
+    "stage3_replacement_audit.csv"
+  ),
+  row.names = FALSE,
+  fileEncoding = "UTF-8"
+)
+
+LOG_FILE <- file.path(
+  DIRS$logs,
+  "stage3_GSE236585.log"
+)
+WARN_FILE <- file.path(
+  DIRS$logs,
+  "stage3_warnings.log"
+)
 START_TIME <- Sys.time()
 
 log_msg <- function(..., level = "INFO") {
@@ -271,20 +426,29 @@ log_msg <- function(..., level = "INFO") {
     txt
   )
   cat(line, "\n")
-  cat(line, "\n", file = LOG_FILE, append = TRUE)
+  cat(
+    line,
+    "\n",
+    file = LOG_FILE,
+    append = TRUE
+  )
   invisible(line)
 }
 
 warning_records <- list()
 add_warning <- function(category, item, message) {
   rec <- data.frame(
-    timestamp = format(Sys.time(), "%Y-%m-%d %H:%M:%S"),
+    timestamp = format(
+      Sys.time(),
+      "%Y-%m-%d %H:%M:%S"
+    ),
     category = as.character(category),
     item = as.character(item),
     message = as.character(message),
     stringsAsFactors = FALSE
   )
   warning_records[[length(warning_records) + 1L]] <<- rec
+
   cat(
     sprintf(
       "[%s] [%s] %s: %s\n",
@@ -296,6 +460,7 @@ add_warning <- function(category, item, message) {
     file = WARN_FILE,
     append = TRUE
   )
+
   log_msg(
     category,
     " | ",
@@ -307,34 +472,31 @@ add_warning <- function(category, item, message) {
   invisible(rec)
 }
 
-log_msg("Stage 2 GSE237156 analysis started.")
+log_msg("Stage 3 v4 checkpoint repair started.")
 log_msg(
-  "Previous incomplete Stage 2 output replacement enabled: ",
-  REPLACE_PREVIOUS_STAGE2
+  "Replacement of prior v4 patch output enabled: ",
+  REPLACE_EXISTING_V4_PATCH
 )
-for (i in seq_len(nrow(replacement_records))) {
+for (i in seq_len(nrow(replacement_audit))) {
   log_msg(
     "Replacement audit | ",
-    replacement_records$path_type[i],
+    replacement_audit$path_type[i],
     " | existed_before=",
-    replacement_records$existed_before[i],
+    replacement_audit$existed_before[i],
     " | deletion_succeeded=",
-    replacement_records$deletion_succeeded[i],
+    replacement_audit$deletion_succeeded[i],
     " | path=",
-    replacement_records$path[i]
+    replacement_audit$path[i]
   )
 }
-write.csv(
-  replacement_records,
-  file.path(
-    DIRS$logs,
-    "previous_stage2_replacement_audit.csv"
-  ),
-  row.names = FALSE,
-  fileEncoding = "UTF-8"
+log_msg("PROJECT_DIR: ", PROJECT_DIR)
+log_msg("SOURCE_STAGE3_V2_DIR: ", SOURCE_STAGE3_V2_DIR)
+log_msg("SOURCE_CHECKPOINT: ", SOURCE_CHECKPOINT)
+log_msg(
+  "Validated scDblFinder dbr.per1k: ",
+  SCDOUBLETFINDER_DBR_PER_1K
 )
-log_msg("RAW_TAR_FILE: ", RAW_TAR_FILE)
-log_msg("LOCKED_MANIFEST_FILE: ", LOCKED_MANIFEST_FILE)
+log_msg("STAGE2_DIR: ", STAGE2_DIR)
 log_msg("OUT_DIR: ", OUT_DIR)
 log_msg(
   "Detected SCRIPT_FILE: ",
@@ -348,13 +510,19 @@ log_msg(
 )
 
 ############################################################
-## 2. Package installation and loading
+## 2. Package setup
 ############################################################
 
 ensure_cran <- function(pkgs, required = TRUE) {
   missing <- pkgs[
-    !vapply(pkgs, requireNamespace, logical(1), quietly = TRUE)
+    !vapply(
+      pkgs,
+      requireNamespace,
+      logical(1),
+      quietly = TRUE
+    )
   ]
+
   if (length(missing) > 0L) {
     log_msg(
       "Installing missing CRAN package(s): ",
@@ -371,8 +539,14 @@ ensure_cran <- function(pkgs, required = TRUE) {
   }
 
   still_missing <- pkgs[
-    !vapply(pkgs, requireNamespace, logical(1), quietly = TRUE)
+    !vapply(
+      pkgs,
+      requireNamespace,
+      logical(1),
+      quietly = TRUE
+    )
   ]
+
   if (length(still_missing) > 0L) {
     msg <- paste(
       "CRAN package(s) unavailable:",
@@ -388,6 +562,7 @@ ensure_cran <- function(pkgs, required = TRUE) {
       )
     }
   }
+
   invisible(setdiff(pkgs, still_missing))
 }
 
@@ -400,8 +575,14 @@ ensure_bioc <- function(pkgs, required = TRUE) {
   }
 
   missing <- pkgs[
-    !vapply(pkgs, requireNamespace, logical(1), quietly = TRUE)
+    !vapply(
+      pkgs,
+      requireNamespace,
+      logical(1),
+      quietly = TRUE
+    )
   ]
+
   if (length(missing) > 0L) {
     log_msg(
       "Installing missing Bioconductor package(s): ",
@@ -418,8 +599,14 @@ ensure_bioc <- function(pkgs, required = TRUE) {
   }
 
   still_missing <- pkgs[
-    !vapply(pkgs, requireNamespace, logical(1), quietly = TRUE)
+    !vapply(
+      pkgs,
+      requireNamespace,
+      logical(1),
+      quietly = TRUE
+    )
   ]
+
   if (length(still_missing) > 0L) {
     msg <- paste(
       "Bioconductor package(s) unavailable:",
@@ -435,55 +622,64 @@ ensure_bioc <- function(pkgs, required = TRUE) {
       )
     }
   }
+
   invisible(setdiff(pkgs, still_missing))
 }
 
 ensure_cran(
   c(
+    "Seurat",
+    "SeuratObject",
     "data.table",
+    "Matrix",
     "ggplot2",
-    "openxlsx",
-    "pheatmap",
     "ggrepel",
+    "patchwork",
+    "pheatmap",
+    "openxlsx",
+    "scales",
     "zip",
     "digest",
     "matrixStats"
   ),
   required = TRUE
 )
+
 ensure_bioc(
   c(
-    "DESeq2",
     "edgeR",
-    "limma",
-    "AnnotationDbi",
-    "org.Mm.eg.db"
+    "limma"
   ),
   required = TRUE
 )
 
-## DESeq2 normal-prior shrinkage is used for reproducibility.
-## Optional GSEA packages are nonfatal.
-if (RUN_OPTIONAL_GSEA) {
-  ensure_cran("msigdbr", required = FALSE)
-  ensure_bioc("fgsea", required = FALSE)
-}
+ensure_bioc(
+  c(
+    "SingleCellExperiment",
+    "SummarizedExperiment",
+    "S4Vectors",
+    "BiocParallel",
+    "scDblFinder"
+  ),
+  required = TRUE
+)
 
 suppressPackageStartupMessages({
+  library(Seurat)
+  library(SeuratObject)
   library(data.table)
-  library(DESeq2)
+  library(Matrix)
+  library(ggplot2)
+  library(ggrepel)
+  library(patchwork)
+  library(pheatmap)
+  library(openxlsx)
   library(edgeR)
   library(limma)
-  library(ggplot2)
-  library(openxlsx)
-  library(pheatmap)
-  library(ggrepel)
-  library(AnnotationDbi)
-  library(org.Mm.eg.db)
 })
 
 ############################################################
-## 3. Utility functions
+## 3. General utilities
 ############################################################
 
 normalize_text <- function(x) {
@@ -494,10 +690,44 @@ normalize_text <- function(x) {
   trimws(x)
 }
 
-write_csv_safe <- function(x, path, compress = FALSE) {
-  if (is.null(x) || ncol(x) == 0L) {
+gene_key <- function(x) {
+  x <- normalize_text(x)
+  x <- sub(
+    "([._-][0-9]+)$",
+    "",
+    x
+  )
+  toupper(x)
+}
+
+extract_gsm <- function(x) {
+  x <- as.character(x)
+  m <- regexpr(
+    "GSM[0-9]+",
+    x,
+    ignore.case = TRUE
+  )
+  out <- rep(NA_character_, length(x))
+  valid <- m > 0L
+  out[valid] <- toupper(
+    regmatches(x, m)[valid]
+  )
+  out
+}
+
+write_csv_safe <- function(
+  x,
+  path,
+  compress = FALSE
+) {
+  if (
+    is.null(x) ||
+    ncol(x) == 0L
+  ) {
     fwrite(
-      data.table(note = "No records generated."),
+      data.table(
+        note = "No records generated."
+      ),
       path
     )
   } else {
@@ -510,7 +740,11 @@ write_csv_safe <- function(x, path, compress = FALSE) {
 }
 
 sanitize_sheet_name <- function(x) {
-  x <- gsub("[\\[\\]:*?/\\\\]", "_", x)
+  x <- gsub(
+    "[\\[\\]:*?/\\\\]",
+    "_",
+    x
+  )
   substr(x, 1L, 31L)
 }
 
@@ -526,13 +760,23 @@ write_sheet_safe <- function(wb, sheet, x) {
     writeData(
       wb,
       sheet,
-      data.frame(note = "No records generated.")
+      data.frame(
+        note = "No records generated."
+      )
     )
     return(invisible(NULL))
   }
 
-  y <- as.data.frame(x, stringsAsFactors = FALSE)
-  char_cols <- vapply(y, is.character, logical(1))
+  y <- as.data.frame(
+    x,
+    stringsAsFactors = FALSE
+  )
+
+  char_cols <- vapply(
+    y,
+    is.character,
+    logical(1)
+  )
   if (any(char_cols)) {
     y[char_cols] <- lapply(
       y[char_cols],
@@ -551,415 +795,355 @@ write_sheet_safe <- function(wb, sheet, x) {
   invisible(NULL)
 }
 
-read_rsem_gene_results <- function(path, sample_accession) {
-  con <- if (grepl("\\.gz$", path, ignore.case = TRUE)) {
+save_plot_bundle <- function(
+  plot_object,
+  stem,
+  width,
+  height
+) {
+  png_path <- file.path(
+    DIRS$figures,
+    paste0(stem, ".png")
+  )
+  pdf_path <- file.path(
+    DIRS$figures,
+    paste0(stem, ".pdf")
+  )
+  tiff_path <- file.path(
+    DIRS$figures,
+    paste0(stem, ".tiff")
+  )
+
+  ggsave(
+    png_path,
+    plot_object,
+    width = width,
+    height = height,
+    dpi = 300,
+    bg = "white"
+  )
+  ggsave(
+    pdf_path,
+    plot_object,
+    width = width,
+    height = height,
+    bg = "white"
+  )
+  ggsave(
+    tiff_path,
+    plot_object,
+    width = width,
+    height = height,
+    dpi = 600,
+    compression = "lzw",
+    bg = "white"
+  )
+
+  invisible(
+    c(
+      png = png_path,
+      pdf = pdf_path,
+      tiff = tiff_path
+    )
+  )
+}
+
+join_layers_safe <- function(
+  object,
+  assay = "RNA"
+) {
+  DefaultAssay(object) <- assay
+
+  out <- tryCatch(
+    {
+      if (
+        "JoinLayers" %in%
+          getNamespaceExports("SeuratObject")
+      ) {
+        SeuratObject::JoinLayers(
+          object,
+          assay = assay
+        )
+      } else if (
+        exists(
+          "JoinLayers",
+          mode = "function"
+        )
+      ) {
+        JoinLayers(
+          object,
+          assay = assay
+        )
+      } else {
+        object
+      }
+    },
+    error = function(e) {
+      add_warning(
+        "SEURAT_LAYER",
+        assay,
+        paste0(
+          "JoinLayers failed; original object retained: ",
+          conditionMessage(e)
+        )
+      )
+      object
+    }
+  )
+
+  DefaultAssay(out) <- assay
+  out
+}
+
+get_assay_matrix <- function(
+  object,
+  layer = "counts",
+  assay = "RNA"
+) {
+  DefaultAssay(object) <- assay
+
+  mat <- tryCatch(
+    SeuratObject::LayerData(
+      object,
+      assay = assay,
+      layer = layer
+    ),
+    error = function(e1) {
+      tryCatch(
+        GetAssayData(
+          object,
+          assay = assay,
+          layer = layer
+        ),
+        error = function(e2) {
+          GetAssayData(
+            object,
+            assay = assay,
+            slot = layer
+          )
+        }
+      )
+    }
+  )
+
+  mat
+}
+
+count_lines_file <- function(path) {
+  con <- if (
+    grepl("\\.gz$", path, ignore.case = TRUE)
+  ) {
     gzfile(path, open = "rt")
   } else {
     file(path, open = "rt")
   }
-  on.exit(try(close(con), silent = TRUE), add = TRUE)
+  on.exit(
+    try(close(con), silent = TRUE),
+    add = TRUE
+  )
 
-  x <- tryCatch(
-    read.delim(
+  n <- 0L
+  repeat {
+    chunk <- readLines(
       con,
-      header = TRUE,
-      sep = "\t",
-      quote = "",
-      comment.char = "",
-      check.names = FALSE,
-      stringsAsFactors = FALSE
-    ),
-    error = function(e) {
-      stop(
-        "Failed to read RSEM file ",
-        basename(path),
-        ": ",
-        conditionMessage(e)
-      )
-    }
-  )
-  setDT(x)
-
-  original_names <- names(x)
-  normalized_names <- tolower(
-    gsub(
-      "[^A-Za-z0-9]+",
-      "_",
-      original_names
+      n = 100000L,
+      warn = FALSE
     )
-  )
-  setnames(x, original_names, normalized_names)
-
-  required <- c("gene_id", "expected_count")
-  missing <- setdiff(required, names(x))
-  if (length(missing) > 0L) {
-    stop(
-      "RSEM file ",
-      basename(path),
-      " is missing required column(s): ",
-      paste(missing, collapse = ", ")
-    )
+    if (length(chunk) == 0L) break
+    n <- n + length(chunk)
   }
-
-  if (!"tpm" %in% names(x)) {
-    x[, tpm := NA_real_]
-  }
-  if (!"fpkm" %in% names(x)) {
-    x[, fpkm := NA_real_]
-  }
-
-  x[, gene_id_raw := as.character(gene_id)]
-  x[, gene_id := sub("\\.[0-9]+$", "", gene_id_raw)]
-  x[, expected_count := suppressWarnings(
-    as.numeric(expected_count)
-  )]
-  x[, tpm := suppressWarnings(as.numeric(tpm))]
-  x[, fpkm := suppressWarnings(as.numeric(fpkm))]
-
-  if (any(!is.finite(x$expected_count))) {
-    stop(
-      "Non-finite expected_count values were detected in ",
-      basename(path)
-    )
-  }
-
-  ## Aggregate only if version stripping creates duplicate identifiers.
-  out <- x[, .(
-    expected_count = sum(
-      expected_count,
-      na.rm = TRUE
-    ),
-    tpm = sum(tpm, na.rm = TRUE),
-    fpkm = sum(fpkm, na.rm = TRUE),
-    collapsed_source_rows = .N
-  ), by = gene_id]
-
-  out[, sample_accession := sample_accession]
-  out
+  n
 }
 
-safe_rank <- function(x, decreasing = TRUE) {
-  x2 <- x
-  x2[!is.finite(x2)] <- NA_real_
-  rank(
-    if (decreasing) -x2 else x2,
-    na.last = "keep",
-    ties.method = "average"
-  )
-}
-
-safe_neglog10 <- function(x) {
-  x <- as.numeric(x)
-  x[is.na(x)] <- 1
-  -log10(pmax(x, .Machine$double.xmin))
-}
-
-get_gene_annotation <- function(gene_ids) {
-  gene_ids <- unique(as.character(gene_ids))
-  gene_ids <- gene_ids[nzchar(gene_ids)]
-
-  ensembl_fraction <- mean(
-    grepl("^ENSMUSG", gene_ids),
-    na.rm = TRUE
-  )
-  entrez_fraction <- mean(
-    grepl("^[0-9]+$", gene_ids),
-    na.rm = TRUE
-  )
-
-  if (
-    is.finite(ensembl_fraction) &&
-    ensembl_fraction >= 0.50
+read_mtx_dimensions <- function(path) {
+  con <- if (
+    grepl("\\.gz$", path, ignore.case = TRUE)
   ) {
-    keytype <- "ENSEMBL"
-  } else if (
-    is.finite(entrez_fraction) &&
-    entrez_fraction >= 0.50
-  ) {
-    keytype <- "ENTREZID"
+    gzfile(path, open = "rt")
   } else {
-    keytype <- "SYMBOL"
+    file(path, open = "rt")
   }
+  on.exit(
+    try(close(con), silent = TRUE),
+    add = TRUE
+  )
 
-  ann <- tryCatch(
-    AnnotationDbi::select(
-      org.Mm.eg.db,
-      keys = gene_ids,
-      keytype = keytype,
-      columns = unique(
-        c(keytype, "SYMBOL", "ENTREZID", "GENENAME")
+  repeat {
+    line <- readLines(
+      con,
+      n = 1L,
+      warn = FALSE
+    )
+    if (length(line) == 0L) {
+      return(
+        c(
+          rows = NA_integer_,
+          cols = NA_integer_,
+          nnz = NA_real_
+        )
       )
-    ),
-    error = function(e) {
-      add_warning(
-        "ANNOTATION",
-        keytype,
-        conditionMessage(e)
-      )
-      data.frame()
     }
-  )
-  setDT(ann)
-
-  if (nrow(ann) == 0L) {
-    return(
-      data.table(
-        gene_id = gene_ids,
-        symbol = NA_character_,
-        entrez_id = NA_character_,
-        gene_name = NA_character_,
-        annotation_keytype = keytype
+    if (!grepl("^%", line)) {
+      fields <- suppressWarnings(
+        as.numeric(
+          strsplit(
+            trimws(line),
+            "[[:space:]]+"
+          )[[1L]]
+        )
       )
-    )
+      if (length(fields) >= 3L) {
+        return(
+          c(
+            rows = fields[1L],
+            cols = fields[2L],
+            nnz = fields[3L]
+          )
+        )
+      }
+    }
   }
-
-  id_col <- keytype
-  setnames(
-    ann,
-    old = intersect(
-      c(id_col, "SYMBOL", "ENTREZID", "GENENAME"),
-      names(ann)
-    ),
-    new = c(
-      "gene_id",
-      "symbol",
-      "entrez_id",
-      "gene_name"
-    )[
-      match(
-        intersect(
-          c(id_col, "SYMBOL", "ENTREZID", "GENENAME"),
-          names(ann)
-        ),
-        c(id_col, "SYMBOL", "ENTREZID", "GENENAME")
-      )
-    ]
-  )
-
-  for (nm in c(
-    "gene_id",
-    "symbol",
-    "entrez_id",
-    "gene_name"
-  )) {
-    if (!nm %in% names(ann)) ann[, (nm) := NA_character_]
-  }
-
-  ann <- ann[
-    !is.na(gene_id) &
-      nzchar(gene_id)
-  ]
-  ann[, symbol_present := (
-    !is.na(symbol) &
-      nzchar(symbol)
-  )]
-  setorder(ann, gene_id, -symbol_present)
-  ann <- ann[, .SD[1L], by = gene_id]
-  ann[, symbol_present := NULL]
-  ann[, annotation_keytype := keytype]
-
-  merge(
-    data.table(gene_id = gene_ids),
-    ann,
-    by = "gene_id",
-    all.x = TRUE
-  )
 }
 
-make_deseq_result <- function(
-  dds,
-  contrast_name,
-  numerator,
-  denominator,
-  alpha = DESEQ_ALPHA
+adaptive_upper_threshold <- function(
+  x,
+  minimum_upper,
+  maximum_upper,
+  mad_multiplier = QC_MAD_MULTIPLIER,
+  quantile_probability = QC_UPPER_QUANTILE
 ) {
-  res_raw <- DESeq2::results(
-    dds,
-    contrast = c(
-      "group",
-      numerator,
-      denominator
-    ),
-    alpha = alpha,
-    independentFiltering = TRUE
-  )
+  x <- as.numeric(x)
+  x <- x[is.finite(x)]
+  if (length(x) == 0L) return(maximum_upper)
 
-  ## Use DESeq2's normal-prior shrinkage to avoid optional compiled
-  ## dependencies and to keep the rerun stable on Windows.
-  shrink_type <- "normal"
-  res_shrunk <- tryCatch(
-    DESeq2::lfcShrink(
-      dds,
-      contrast = c(
-        "group",
-        numerator,
-        denominator
-      ),
-      res = res_raw,
-      type = "normal",
-      quiet = TRUE
-    ),
-    error = function(e) NULL
+  med <- median(x)
+  mad_value <- mad(
+    x,
+    center = med,
+    constant = 1.4826
   )
-
-  if (is.null(res_shrunk)) {
-    res_shrunk <- res_raw
-    shrink_type <- "unshrunken_fallback"
-    add_warning(
-      "LFC_SHRINK",
-      contrast_name,
-      "Normal-prior shrinkage failed; unshrunken DESeq2 log2FC retained."
+  q_value <- as.numeric(
+    quantile(
+      x,
+      probs = quantile_probability,
+      na.rm = TRUE,
+      names = FALSE
     )
-  }
-
-  out <- data.table(
-    gene_id = rownames(res_raw),
-    base_mean = res_raw$baseMean,
-    log2fc_raw = res_raw$log2FoldChange,
-    lfc_se_raw = res_raw$lfcSE,
-    stat = res_raw$stat,
-    pvalue = res_raw$pvalue,
-    padj = res_raw$padj,
-    log2fc_shrunk = res_shrunk$log2FoldChange,
-    lfc_se_shrunk = res_shrunk$lfcSE,
-    contrast = contrast_name,
-    numerator = numerator,
-    denominator = denominator,
-    lfc_shrink_type = shrink_type,
-    method = "DESeq2"
   )
 
-  out[, formal_fdr_005 := (
-    !is.na(padj) &
-      padj <= FORMAL_FDR
-  )]
-  out[, exploratory_fdr_010 := (
-    !is.na(padj) &
-      padj <= EXPLORATORY_FDR
-  )]
-  out
+  candidate <- max(
+    q_value,
+    med + mad_multiplier * mad_value,
+    minimum_upper,
+    na.rm = TRUE
+  )
+
+  min(maximum_upper, candidate)
 }
 
-make_edger_result <- function(
-  fit,
-  contrast_name,
-  numerator,
-  denominator,
-  design_columns
-) {
-  contrast_vector <- rep(
-    0,
-    length(design_columns)
-  )
-  names(contrast_vector) <- design_columns
+hedges_g <- function(x, y) {
+  x <- as.numeric(x)
+  y <- as.numeric(y)
+  x <- x[is.finite(x)]
+  y <- y[is.finite(y)]
+
+  n1 <- length(x)
+  n2 <- length(y)
+
+  if (n1 < 2L || n2 < 2L) {
+    return(NA_real_)
+  }
+
+  pooled_var <- (
+    (n1 - 1L) * stats::var(x) +
+      (n2 - 1L) * stats::var(y)
+  ) / (n1 + n2 - 2L)
 
   if (
-    !numerator %in% design_columns ||
-    !denominator %in% design_columns
+    !is.finite(pooled_var) ||
+    pooled_var <= 0
   ) {
-    stop(
-      "edgeR contrast level not found: ",
-      numerator,
-      " vs ",
-      denominator
-    )
+    return(NA_real_)
   }
 
-  contrast_vector[numerator] <- 1
-  contrast_vector[denominator] <- -1
+  d <- (
+    mean(x) - mean(y)
+  ) / sqrt(pooled_var)
 
-  test <- edgeR::glmQLFTest(
-    fit,
-    contrast = contrast_vector
-  )
-  tab <- edgeR::topTags(
-    test,
-    n = Inf,
-    sort.by = "none"
-  )$table
-  setDT(tab, keep.rownames = "gene_id")
+  correction <- 1 -
+    3 / (
+      4 * (n1 + n2) - 9
+    )
 
-  out <- tab[, .(
-    gene_id,
-    log2fc = logFC,
-    log_cpm = logCPM,
-    qlf = F,
-    pvalue = PValue,
-    padj = FDR
-  )]
-  out[, contrast := contrast_name]
-  out[, numerator := numerator]
-  out[, denominator := denominator]
-  out[, method := "edgeR_QL"]
-  out[, formal_fdr_005 := (
-    !is.na(padj) &
-      padj <= FORMAL_FDR
-  )]
-  out[, exploratory_fdr_010 := (
-    !is.na(padj) &
-      padj <= EXPLORATORY_FDR
-  )]
-  out
+  correction * d
 }
 
-summarize_contrast <- function(x, method_name) {
-  data.table(
-    contrast = unique(x$contrast)[1L],
-    method = method_name,
-    tested_genes = nrow(x),
-    fdr_005_up = sum(
-      x$padj <= FORMAL_FDR &
-        if (
-          "log2fc_shrunk" %in% names(x)
-        ) {
-          x$log2fc_shrunk > 0
-        } else {
-          x$log2fc > 0
-        },
-      na.rm = TRUE
-    ),
-    fdr_005_down = sum(
-      x$padj <= FORMAL_FDR &
-        if (
-          "log2fc_shrunk" %in% names(x)
-        ) {
-          x$log2fc_shrunk < 0
-        } else {
-          x$log2fc < 0
-        },
-      na.rm = TRUE
-    ),
-    fdr_010_up = sum(
-      x$padj <= EXPLORATORY_FDR &
-        if (
-          "log2fc_shrunk" %in% names(x)
-        ) {
-          x$log2fc_shrunk > 0
-        } else {
-          x$log2fc > 0
-        },
-      na.rm = TRUE
-    ),
-    fdr_010_down = sum(
-      x$padj <= EXPLORATORY_FDR &
-        if (
-          "log2fc_shrunk" %in% names(x)
-        ) {
-          x$log2fc_shrunk < 0
-        } else {
-          x$log2fc < 0
-        },
-      na.rm = TRUE
+safe_wilcox_p <- function(x, y) {
+  x <- as.numeric(x)
+  y <- as.numeric(y)
+  x <- x[is.finite(x)]
+  y <- y[is.finite(y)]
+
+  if (
+    length(x) < 1L ||
+    length(y) < 1L
+  ) {
+    return(NA_real_)
+  }
+
+  tryCatch(
+    wilcox.test(
+      x,
+      y,
+      exact = FALSE
+    )$p.value,
+    error = function(e) NA_real_
+  )
+}
+
+safe_spearman <- function(x, y) {
+  keep <- is.finite(x) & is.finite(y)
+  if (sum(keep) < 3L) return(NA_real_)
+
+  suppressWarnings(
+    cor(
+      x[keep],
+      y[keep],
+      method = "spearman"
     )
   )
+}
+
+safe_pearson <- function(x, y) {
+  keep <- is.finite(x) & is.finite(y)
+  if (sum(keep) < 3L) return(NA_real_)
+
+  suppressWarnings(
+    cor(
+      x[keep],
+      y[keep],
+      method = "pearson"
+    )
+  )
+}
+
+edgeR_norm_lib_sizes <- function(y) {
+  if (
+    "normLibSizes" %in%
+      getNamespaceExports("edgeR")
+  ) {
+    edgeR::normLibSizes(y)
+  } else {
+    edgeR::calcNormFactors(y)
+  }
 }
 
 ############################################################
-## 4. Read and validate locked GSE237156 metadata
+## 4. Read Stage 1 metadata and Stage 2 ranked programs
 ############################################################
 
 locked_manifest <- fread(
-  LOCKED_MANIFEST_FILE,
+  STAGE1_MANIFEST,
   encoding = "UTF-8",
   na.strings = c("", "NA", "NaN")
 )
@@ -968,11 +1152,8 @@ required_manifest_columns <- c(
   "dataset_id",
   "sample_accession",
   "original_title",
-  "group_id",
   "condition",
-  "diet_or_model",
-  "drug",
-  "macrophage_subset",
+  "group_id",
   "lock_status"
 )
 missing_manifest_columns <- setdiff(
@@ -981,2252 +1162,4617 @@ missing_manifest_columns <- setdiff(
 )
 if (length(missing_manifest_columns) > 0L) {
   stop(
-    "Locked manifest is missing column(s): ",
+    "Stage 1 manifest is missing column(s): ",
     paste(missing_manifest_columns, collapse = ", ")
   )
 }
 
 sample_meta <- locked_manifest[
-  dataset_id == "GSE237156"
+  dataset_id == "GSE236585"
 ]
-if (nrow(sample_meta) != 16L) {
+if (
+  nrow(sample_meta) != 6L ||
+  uniqueN(sample_meta$sample_accession) != 6L
+) {
   stop(
-    "Expected 16 locked GSE237156 samples, found ",
-    nrow(sample_meta),
-    "."
+    "Expected six unique GSE236585 samples in the Stage 1 manifest."
   )
-}
-if (uniqueN(sample_meta$sample_accession) != 16L) {
-  stop("GSE237156 sample accessions are not unique.")
 }
 if (any(!grepl("^LOCKED", sample_meta$lock_status))) {
-  stop("At least one GSE237156 sample is not metadata-locked.")
+  stop(
+    "At least one GSE236585 sample is not metadata-locked."
+  )
 }
 
-sample_meta[, macrophage_subset := factor(
-  macrophage_subset,
-  levels = c(
-    "Ccr2_negative",
-    "Ccr2_positive"
-  )
+sample_meta[, condition := factor(
+  condition,
+  levels = c("Control", "HFpEF")
 )]
-sample_meta[, diet := factor(
-  diet_or_model,
-  levels = c("CD", "HFD")
-)]
-sample_meta[, drug_factor := factor(
-  drug,
-  levels = c(
-    "Vehicle",
-    "Dapagliflozin"
-  )
-)]
-sample_meta[, group := factor(group_id)]
-
-group_check <- sample_meta[, .N, by = group_id]
 if (
-  nrow(group_check) != 8L ||
-  any(group_check$N != 2L)
+  any(is.na(sample_meta$condition)) ||
+  any(table(sample_meta$condition) != 3L)
 ) {
-  fwrite(
-    group_check,
-    file.path(
-      DIRS$tables,
-      "FATAL_GSE237156_group_count_check.csv"
-    )
-  )
   stop(
-    "The locked GSE237156 design is not 8 groups x 2 samples."
+    "Expected three Control and three HFpEF samples."
   )
 }
 
 setorder(
   sample_meta,
-  macrophage_subset,
-  diet,
-  drug_factor,
+  condition,
   sample_accession
 )
 fwrite(
   sample_meta,
   file.path(
     DIRS$tables,
-    "01_sample_metadata_used.csv"
+    "01_locked_GSE236585_sample_metadata.csv"
   )
 )
-fwrite(
-  group_check,
-  file.path(
-    DIRS$tables,
-    "02_group_count_validation.csv"
-  )
+
+stage2_pos <- fread(
+  STAGE2_POS_FILE,
+  encoding = "UTF-8"
 )
-log_msg(
-  "Validated GSE237156 design: 16 samples, 8 groups, 2 samples per group."
+stage2_neg <- fread(
+  STAGE2_NEG_FILE,
+  encoding = "UTF-8"
+)
+stage2_cross <- fread(
+  STAGE2_CROSS_FILE,
+  encoding = "UTF-8"
 )
 
-############################################################
-## 5. Map and extract RSEM files from GEO RAW tar
-############################################################
-
-tar_members <- tryCatch(
-  utils::untar(
-    RAW_TAR_FILE,
-    list = TRUE
-  ),
-  error = function(e) {
+required_stage2_columns <- c(
+  "symbol",
+  "disease_lfc",
+  "drug_lfc",
+  "deseq_opposed",
+  "edger_opposed",
+  "four_effect_signs_consistent",
+  "opposition_tier",
+  "within_subset_rank"
+)
+for (nm in required_stage2_columns) {
+  if (
+    !nm %in% names(stage2_pos) ||
+    !nm %in% names(stage2_neg)
+  ) {
     stop(
-      "Unable to list GSE237156_RAW.tar: ",
-      conditionMessage(e)
+      "Stage 2 opposition table is missing required column: ",
+      nm
     )
   }
-)
-
-if (length(tar_members) == 0L) {
-  stop("GSE237156_RAW.tar contains no listed members.")
 }
 
-mapping_records <- list()
-for (gsm in sample_meta$sample_accession) {
-  hits <- tar_members[
-    grepl(
-      gsm,
-      tar_members,
-      fixed = TRUE
-    ) &
-      grepl(
-        "\\.genes\\.results(\\.gz)?$",
-        tar_members,
-        ignore.case = TRUE
-      )
+derive_subset_signature_table <- function(
+  x,
+  subset_label
+) {
+  y <- copy(x)
+
+  y <- y[
+    !is.na(symbol) &
+      nzchar(symbol) &
+      opposition_tier %in% SIGNATURE_TIERS &
+      deseq_opposed == TRUE &
+      edger_opposed == TRUE &
+      four_effect_signs_consistent == TRUE &
+      is.finite(disease_lfc) &
+      is.finite(drug_lfc)
   ]
 
-  if (length(hits) != 1L) {
-    mapping_records[[length(mapping_records) + 1L]] <- data.table(
-      sample_accession = gsm,
-      archive_member = paste(hits, collapse = "; "),
-      match_count = length(hits),
-      mapping_status = "FAIL"
-    )
-  } else {
-    mapping_records[[length(mapping_records) + 1L]] <- data.table(
-      sample_accession = gsm,
-      archive_member = hits,
-      match_count = 1L,
-      mapping_status = "PASS"
-    )
-  }
+  y[, symbol_key := gene_key(symbol)]
+  y <- y[
+    nzchar(symbol_key)
+  ]
+  ## data.table::setorder() accepts column names, not expressions.
+  ## Explicit helper columns prevent the previous -abs(expression) failure.
+  y[, abs_disease_lfc_for_order := abs(disease_lfc)]
+  y[, abs_drug_lfc_for_order := abs(drug_lfc)]
+  setorder(
+    y,
+    within_subset_rank,
+    -abs_disease_lfc_for_order,
+    -abs_drug_lfc_for_order
+  )
+  y <- y[, .SD[1L], by = symbol_key]
+  y[
+    ,
+    c(
+      "abs_disease_lfc_for_order",
+      "abs_drug_lfc_for_order"
+    ) := NULL
+  ]
+
+  y[, direction := fcase(
+    disease_lfc > 0 &
+      drug_lfc < 0,
+    "Disease_up_Drug_down",
+
+    disease_lfc < 0 &
+      drug_lfc > 0,
+    "Disease_down_Drug_up",
+
+    default = "Other"
+  )]
+  y <- y[direction != "Other"]
+  y[, subset_source := subset_label]
+  y
 }
 
-sample_file_map <- rbindlist(mapping_records)
-sample_file_map <- merge(
-  sample_meta[, .(
-    sample_accession,
-    original_title,
-    group_id,
-    macrophage_subset,
-    diet,
-    drug = drug_factor
-  )],
-  sample_file_map,
-  by = "sample_accession",
-  all.x = TRUE
+pos_signature_base <- derive_subset_signature_table(
+  stage2_pos,
+  "Ccr2_positive"
+)
+neg_signature_base <- derive_subset_signature_table(
+  stage2_neg,
+  "Ccr2_negative"
 )
 
-fwrite(
-  sample_file_map,
-  file.path(
-    DIRS$tables,
-    "03_sample_to_RSEM_file_mapping.csv"
-  )
+required_cross_columns <- c(
+  "symbol",
+  "pos_disease_lfc",
+  "pos_drug_lfc",
+  "neg_disease_lfc",
+  "neg_drug_lfc",
+  "consensus_category",
+  "overall_consensus_rank"
 )
-
-if (any(sample_file_map$mapping_status != "PASS")) {
+missing_cross_columns <- setdiff(
+  required_cross_columns,
+  names(stage2_cross)
+)
+if (length(missing_cross_columns) > 0L) {
   stop(
-    "At least one GSM accession did not map uniquely to an RSEM gene-results file. ",
-    "See 03_sample_to_RSEM_file_mapping.csv."
+    "Cross-subset Stage 2 table is missing column(s): ",
+    paste(missing_cross_columns, collapse = ", ")
   )
 }
 
-members_to_extract <- unique(
-  sample_file_map$archive_member
+cross_signature_base <- copy(stage2_cross)
+cross_signature_base <- cross_signature_base[
+  !is.na(symbol) &
+    nzchar(symbol) &
+    consensus_category ==
+      "Cross_subset_full_directional_consensus" &
+    is.finite(pos_disease_lfc) &
+    is.finite(pos_drug_lfc) &
+    is.finite(neg_disease_lfc) &
+    is.finite(neg_drug_lfc)
+]
+cross_signature_base[, symbol_key := gene_key(symbol)]
+setorder(
+  cross_signature_base,
+  overall_consensus_rank
 )
-log_msg(
-  "Extracting ",
-  length(members_to_extract),
-  " RSEM files."
-)
+cross_signature_base <- cross_signature_base[
+  ,
+  .SD[1L],
+  by = symbol_key
+]
+cross_signature_base[, direction := fcase(
+  pos_disease_lfc > 0 &
+    pos_drug_lfc < 0 &
+    neg_disease_lfc > 0 &
+    neg_drug_lfc < 0,
+  "Disease_up_Drug_down",
 
-utils::untar(
-  RAW_TAR_FILE,
-  files = members_to_extract,
-  exdir = DIRS$extracted
-)
+  pos_disease_lfc < 0 &
+    pos_drug_lfc > 0 &
+    neg_disease_lfc < 0 &
+    neg_drug_lfc > 0,
+  "Disease_down_Drug_up",
 
-sample_file_map[, local_file := file.path(
-  DIRS$extracted,
-  archive_member
+  default = "Other"
 )]
-sample_file_map[, extracted_exists := file.exists(local_file)]
+cross_signature_base <- cross_signature_base[
+  direction != "Other"
+]
+cross_signature_base[, subset_source := "Cross_subset"]
+cross_signature_base[
+  ,
+  disease_lfc := rowMeans(
+    cbind(
+      pos_disease_lfc,
+      neg_disease_lfc
+    ),
+    na.rm = TRUE
+  )
+]
+cross_signature_base[
+  ,
+  drug_lfc := rowMeans(
+    cbind(
+      pos_drug_lfc,
+      neg_drug_lfc
+    ),
+    na.rm = TRUE
+  )
+]
+cross_signature_base[
+  ,
+  within_subset_rank :=
+    overall_consensus_rank
+]
 
-if (any(!sample_file_map$extracted_exists)) {
-  stop("One or more selected RSEM files were not extracted successfully.")
+build_signature_sets <- function(
+  base_table,
+  prefix
+) {
+  out <- list()
+  manifest_records <- list()
+
+  for (n_target in SIGNATURE_SIZES) {
+    up_dt <- base_table[
+      direction == "Disease_up_Drug_down"
+    ][
+      order(within_subset_rank)
+    ][
+      seq_len(min(n_target, .N))
+    ]
+
+    down_dt <- base_table[
+      direction == "Disease_down_Drug_up"
+    ][
+      order(within_subset_rank)
+    ][
+      seq_len(min(n_target, .N))
+    ]
+
+    set_name <- paste0(
+      prefix,
+      "_Top",
+      n_target
+    )
+
+    out[[set_name]] <- list(
+      up = unique(up_dt$symbol),
+      down = unique(down_dt$symbol),
+      requested_size_per_direction = n_target,
+      source = prefix
+    )
+
+    if (nrow(up_dt) > 0L) {
+      manifest_records[[length(manifest_records) + 1L]] <- up_dt[
+        ,
+        .(
+          signature_name = set_name,
+          signature_source = prefix,
+          requested_size_per_direction = n_target,
+          direction,
+          symbol,
+          symbol_key,
+          stage2_disease_lfc = disease_lfc,
+          stage2_drug_lfc = drug_lfc,
+          stage2_rank = within_subset_rank
+        )
+      ]
+    }
+
+    if (nrow(down_dt) > 0L) {
+      manifest_records[[length(manifest_records) + 1L]] <- down_dt[
+        ,
+        .(
+          signature_name = set_name,
+          signature_source = prefix,
+          requested_size_per_direction = n_target,
+          direction,
+          symbol,
+          symbol_key,
+          stage2_disease_lfc = disease_lfc,
+          stage2_drug_lfc = drug_lfc,
+          stage2_rank = within_subset_rank
+        )
+      ]
+    }
+  }
+
+  list(
+    sets = out,
+    manifest = if (
+      length(manifest_records) > 0L
+    ) {
+      rbindlist(
+        manifest_records,
+        use.names = TRUE,
+        fill = TRUE
+      )
+    } else {
+      data.table()
+    }
+  )
 }
 
-fwrite(
-  sample_file_map,
-  file.path(
-    DIRS$tables,
-    "03_sample_to_RSEM_file_mapping.csv"
-  )
+pos_sets <- build_signature_sets(
+  pos_signature_base,
+  "Ccr2pos"
+)
+neg_sets <- build_signature_sets(
+  neg_signature_base,
+  "Ccr2neg"
+)
+cross_sets <- build_signature_sets(
+  cross_signature_base,
+  "CrossSubset"
 )
 
-############################################################
-## 6. Build expected-count, TPM, and FPKM matrices
-############################################################
-
-rsem_list <- list()
-for (i in seq_len(nrow(sample_file_map))) {
-  gsm <- sample_file_map$sample_accession[i]
-  f <- sample_file_map$local_file[i]
-  log_msg(
-    "Reading RSEM file ",
-    i,
-    "/",
-    nrow(sample_file_map),
-    ": ",
-    basename(f)
-  )
-  rsem_list[[gsm]] <- read_rsem_gene_results(
-    f,
-    gsm
-  )
-}
-
-rsem_long <- rbindlist(
-  rsem_list,
+signature_sets <- c(
+  pos_sets$sets,
+  neg_sets$sets,
+  cross_sets$sets
+)
+signature_manifest <- rbindlist(
+  list(
+    pos_sets$manifest,
+    neg_sets$manifest,
+    cross_sets$manifest
+  ),
   use.names = TRUE,
   fill = TRUE
 )
 
-count_wide <- dcast(
-  rsem_long,
-  gene_id ~ sample_accession,
-  value.var = "expected_count",
-  fill = 0
-)
-tpm_wide <- dcast(
-  rsem_long,
-  gene_id ~ sample_accession,
-  value.var = "tpm",
-  fill = 0
-)
-fpkm_wide <- dcast(
-  rsem_long,
-  gene_id ~ sample_accession,
-  value.var = "fpkm",
-  fill = 0
-)
-
-sample_order <- sample_meta$sample_accession
-missing_count_columns <- setdiff(
-  sample_order,
-  names(count_wide)
-)
-if (length(missing_count_columns) > 0L) {
-  stop(
-    "Count matrix is missing sample column(s): ",
-    paste(missing_count_columns, collapse = ", ")
-  )
-}
-
-count_matrix_fractional <- as.matrix(
-  count_wide[, ..sample_order]
-)
-rownames(count_matrix_fractional) <- count_wide$gene_id
-storage.mode(count_matrix_fractional) <- "numeric"
-
-tpm_matrix <- as.matrix(
-  tpm_wide[, ..sample_order]
-)
-rownames(tpm_matrix) <- tpm_wide$gene_id
-storage.mode(tpm_matrix) <- "numeric"
-
-fpkm_matrix <- as.matrix(
-  fpkm_wide[, ..sample_order]
-)
-rownames(fpkm_matrix) <- fpkm_wide$gene_id
-storage.mode(fpkm_matrix) <- "numeric"
-
 if (
-  any(!is.finite(count_matrix_fractional)) ||
-  any(count_matrix_fractional < 0)
+  length(signature_sets) !=
+    length(SIGNATURE_SIZES) * 3L
 ) {
-  stop("Count matrix contains non-finite or negative values.")
-}
-
-count_matrix <- round(count_matrix_fractional)
-storage.mode(count_matrix) <- "integer"
-
-gene_filter <- (
-  rowSums(count_matrix >= MIN_COUNT) >=
-    MIN_SAMPLES_WITH_MIN_COUNT
-)
-if (sum(gene_filter) < 5000L) {
   stop(
-    "Only ",
-    sum(gene_filter),
-    " genes passed count filtering; inspect input reconstruction."
+    "The expected signature-set collection was not generated."
   )
 }
-count_matrix_filtered <- count_matrix[
-  gene_filter,
-  ,
-  drop = FALSE
-]
 
-gene_filter_table <- data.table(
-  gene_id = rownames(count_matrix),
-  total_count = rowSums(count_matrix),
-  samples_count_ge_min = rowSums(
-    count_matrix >= MIN_COUNT
-  ),
-  retained = gene_filter
-)
 fwrite(
-  gene_filter_table,
+  signature_manifest,
   file.path(
     DIRS$tables,
-    "04_gene_filter_status.csv.gz"
-  ),
-  compress = "gzip"
+    "02_stage2_signature_gene_manifest.csv"
+  )
 )
 
-saveRDS(
-  count_matrix_fractional,
+signature_size_summary <- signature_manifest[
+  ,
+  .(
+    selected_genes = uniqueN(symbol_key)
+  ),
+  by = .(
+    signature_name,
+    signature_source,
+    requested_size_per_direction,
+    direction
+  )
+]
+fwrite(
+  signature_size_summary,
   file.path(
-    DIRS$objects,
-    "GSE237156_fractional_expected_counts.rds"
+    DIRS$tables,
+    "03_stage2_signature_size_summary.csv"
   )
 )
-saveRDS(
-  count_matrix,
+
+############################################################
+## 5. Load the Stage 3 v2 post-QC checkpoint
+############################################################
+
+log_msg(
+  "Loading post-QC/pre-doublet checkpoint. ",
+  "The six 10x matrices and original QC are not repeated."
+)
+
+cardiac <- readRDS(SOURCE_CHECKPOINT)
+if (!inherits(cardiac, "Seurat")) {
+  stop("SOURCE_CHECKPOINT is not a Seurat object.")
+}
+
+DefaultAssay(cardiac) <- "RNA"
+cardiac <- join_layers_safe(
+  cardiac,
+  assay = "RNA"
+)
+
+## Remove any stale downstream state. The source checkpoint was generated
+## before doublet calling, normalization, PCA, clustering, and UMAP, but
+## these assignments make the resume boundary explicit.
+cardiac@reductions <- list()
+cardiac@graphs <- list()
+cardiac@neighbors <- list()
+Idents(cardiac) <- factor(rep("post_QC", ncol(cardiac)))
+
+for (stale_column in c(
+  "doublet_class",
+  "doublet_score",
+  "seurat_clusters",
+  "major_cell_type",
+  "annotation_confidence",
+  "analysis_inclusion"
+)) {
+  if (stale_column %in% names(cardiac@meta.data)) {
+    cardiac@meta.data[[stale_column]] <- NULL
+  }
+}
+
+file_map <- fread(
+  SOURCE_FILE_MAP,
+  encoding = "UTF-8"
+)
+qc_thresholds <- fread(
+  SOURCE_QC_THRESHOLDS,
+  encoding = "UTF-8"
+)
+qc_summary <- fread(
+  SOURCE_QC_SUMMARY,
+  encoding = "UTF-8"
+)
+
+required_checkpoint_meta <- c(
+  "sample_accession",
+  "condition",
+  "percent.mt",
+  "nCount_RNA",
+  "nFeature_RNA"
+)
+missing_checkpoint_meta <- setdiff(
+  required_checkpoint_meta,
+  names(cardiac@meta.data)
+)
+if (length(missing_checkpoint_meta) > 0L) {
+  stop(
+    "The source checkpoint is missing metadata column(s): ",
+    paste(missing_checkpoint_meta, collapse = ", ")
+  )
+}
+
+checkpoint_meta <- as.data.table(
+  cardiac@meta.data,
+  keep.rownames = "cell"
+)
+checkpoint_sample_counts <- checkpoint_meta[
+  ,
+  .(
+    checkpoint_cells = .N
+  ),
+  by = .(
+    sample_accession,
+    condition
+  )
+]
+
+if (
+  uniqueN(checkpoint_meta$sample_accession) != 6L ||
+  nrow(checkpoint_sample_counts) != 6L
+) {
+  stop(
+    "The source checkpoint does not contain six biological samples."
+  )
+}
+
+checkpoint_condition_counts <- unique(
+  checkpoint_meta[
+    ,
+    .(
+      sample_accession,
+      condition
+    )
+  ]
+)[
+  ,
+  .N,
+  by = condition
+]
+if (
+  checkpoint_condition_counts[
+    condition == "Control",
+    N
+  ] != 3L ||
+  checkpoint_condition_counts[
+    condition == "HFpEF",
+    N
+  ] != 3L
+) {
+  stop(
+    "The source checkpoint does not contain 3 Control and 3 HFpEF samples."
+  )
+}
+
+qc_validation <- merge(
+  qc_summary[
+    ,
+    .(
+      sample_accession,
+      expected_post_QC_cells = cells_after_qc
+    )
+  ],
+  checkpoint_sample_counts[
+    ,
+    .(
+      sample_accession,
+      checkpoint_cells
+    )
+  ],
+  by = "sample_accession",
+  all = TRUE
+)
+qc_validation[
+  ,
+  checkpoint_matches_v2_QC := (
+    expected_post_QC_cells ==
+      checkpoint_cells
+  )
+]
+
+if (any(!qc_validation$checkpoint_matches_v2_QC)) {
+  fwrite(
+    qc_validation,
+    file.path(
+      DIRS$tables,
+      "FATAL_checkpoint_cell_count_validation.csv"
+    )
+  )
+  stop(
+    "Checkpoint cell counts do not match the completed v2 QC summary."
+  )
+}
+
+checkpoint_audit <- data.table(
+  source_checkpoint = normalizePath(
+    SOURCE_CHECKPOINT,
+    winslash = "/",
+    mustWork = TRUE
+  ),
+  source_stage3_v2_directory = normalizePath(
+    SOURCE_STAGE3_V2_DIR,
+    winslash = "/",
+    mustWork = TRUE
+  ),
+  checkpoint_cells = ncol(cardiac),
+  checkpoint_genes = nrow(cardiac),
+  biological_samples =
+    uniqueN(checkpoint_meta$sample_accession),
+  hfpef_samples =
+    uniqueN(
+      checkpoint_meta[
+        condition == "HFpEF",
+        sample_accession
+      ]
+    ),
+  control_samples =
+    uniqueN(
+      checkpoint_meta[
+        condition == "Control",
+        sample_accession
+      ]
+    ),
+  raw_10x_re_read = FALSE,
+  original_QC_repeated = FALSE,
+  resume_boundary =
+    "post_QC_pre_doublet"
+)
+
+fwrite(
+  checkpoint_audit,
   file.path(
-    DIRS$objects,
-    "GSE237156_rounded_expected_counts.rds"
+    DIRS$tables,
+    "04A_checkpoint_resume_audit.csv"
   )
 )
-saveRDS(
-  count_matrix_filtered,
+fwrite(
+  file_map,
   file.path(
-    DIRS$objects,
-    "GSE237156_filtered_integer_counts.rds"
+    DIRS$tables,
+    "04_GSE236585_10x_file_mapping_and_dimensions.csv"
   )
 )
-saveRDS(
-  tpm_matrix,
+fwrite(
+  qc_thresholds,
   file.path(
-    DIRS$objects,
-    "GSE237156_TPM_matrix.rds"
+    DIRS$tables,
+    "05_sample_specific_QC_thresholds.csv"
   )
 )
-saveRDS(
-  fpkm_matrix,
+fwrite(
+  qc_summary,
   file.path(
-    DIRS$objects,
-    "GSE237156_FPKM_matrix.rds"
+    DIRS$tables,
+    "06_sample_QC_retention_summary.csv"
+  )
+)
+fwrite(
+  qc_validation,
+  file.path(
+    DIRS$tables,
+    "06A_checkpoint_cell_count_validation.csv"
   )
 )
 
 log_msg(
-  "Reconstructed ",
-  nrow(count_matrix),
-  " genes x ",
-  ncol(count_matrix),
-  " samples; ",
-  sum(gene_filter),
-  " genes retained."
+  "Checkpoint validated: ",
+  ncol(cardiac),
+  " post-QC cells and ",
+  nrow(cardiac),
+  " genes across six samples."
 )
 
 ############################################################
-## 7. Gene annotation
+## 6. Mandatory scDblFinder by biological sample
 ############################################################
 
-gene_annotation <- get_gene_annotation(
-  rownames(count_matrix)
-)
-gene_annotation[, display_gene := fifelse(
-  !is.na(symbol) &
-    nzchar(symbol),
-  symbol,
-  gene_id
-)]
-fwrite(
-  gene_annotation,
-  file.path(
-    DIRS$tables,
-    "05_gene_annotation.csv"
+run_scdblfinder_by_sample <- function(
+  object,
+  dbr_per_1k =
+    SCDOUBLETFINDER_DBR_PER_1K
+) {
+  if (
+    length(dbr_per_1k) != 1L ||
+    !is.numeric(dbr_per_1k) ||
+    !is.finite(dbr_per_1k) ||
+    dbr_per_1k <= 0 ||
+    dbr_per_1k >= 1
+  ) {
+    stop(
+      "Invalid dbr.per1k supplied to scDblFinder: ",
+      paste(dbr_per_1k, collapse = ", "),
+      ". Use a proportion such as 0.008, not 8."
+    )
+  }
+
+  counts <- get_assay_matrix(
+    object,
+    layer = "counts",
+    assay = "RNA"
   )
-)
-
-############################################################
-## 8. Sample-level quality control
-############################################################
-
-sample_qc <- data.table(
-  sample_accession = colnames(count_matrix),
-  library_size_fractional = colSums(
-    count_matrix_fractional
-  ),
-  library_size_rounded = colSums(count_matrix),
-  detected_count_ge_1 = colSums(
-    count_matrix >= 1L
-  ),
-  detected_count_ge_10 = colSums(
-    count_matrix >= 10L
-  ),
-  detected_tpm_gt_0 = colSums(
-    tpm_matrix > 0
+  metadata <- as.data.table(
+    object@meta.data,
+    keep.rownames = "cell"
   )
-)
-sample_qc <- merge(
-  sample_meta[, .(
-    sample_accession,
-    original_title,
-    group_id,
-    macrophage_subset,
-    diet,
-    drug = drug_factor
-  )],
-  sample_qc,
-  by = "sample_accession",
-  all.x = TRUE
-)
-setorder(
-  sample_qc,
-  macrophage_subset,
-  diet,
-  drug,
-  sample_accession
-)
-fwrite(
-  sample_qc,
-  file.path(
-    DIRS$tables,
-    "06_sample_QC_metrics.csv"
-  )
-)
+  metadata <- metadata[
+    match(
+      colnames(counts),
+      cell
+    )
+  ]
 
-coldata <- as.data.frame(
-  sample_meta[, .(
-    sample_accession,
-    macrophage_subset,
-    diet,
-    drug = drug_factor,
-    group
-  )]
+  if (
+    any(is.na(metadata$cell)) ||
+    any(metadata$cell != colnames(counts))
+  ) {
+    stop(
+      "Cell metadata could not be aligned to the checkpoint count matrix."
+    )
+  }
+
+  sample_ids <- sort(
+    unique(
+      as.character(
+        metadata$sample_accession
+      )
+    )
+  )
+  call_records <- list()
+  summary_records <- list()
+
+  dbl_fun <- get(
+    "scDblFinder",
+    envir = asNamespace("scDblFinder")
+  )
+  dbl_formals <- names(
+    formals(dbl_fun)
+  )
+
+  for (i in seq_along(sample_ids)) {
+    gsm <- sample_ids[i]
+    idx <- which(
+      metadata$sample_accession == gsm
+    )
+    sample_counts <- counts[
+      ,
+      idx,
+      drop = FALSE
+    ]
+
+    log_msg(
+      "scDblFinder sample ",
+      i,
+      "/",
+      length(sample_ids),
+      ": ",
+      gsm,
+      " | cells=",
+      ncol(sample_counts)
+    )
+
+    sce <- SingleCellExperiment::SingleCellExperiment(
+      assays = list(
+        counts = sample_counts
+      )
+    )
+    sce$sample_accession <- rep(
+      gsm,
+      ncol(sce)
+    )
+    sce$condition <- as.character(
+      metadata$condition[idx]
+    )
+
+    set.seed(20260714 + i)
+    dbl_args <- list(sce)
+
+    if ("dbr.per1k" %in% dbl_formals) {
+      dbl_args$dbr.per1k <- dbr_per_1k
+    }
+    if ("BPPARAM" %in% dbl_formals) {
+      dbl_args$BPPARAM <-
+        BiocParallel::SerialParam()
+    }
+
+    sce_result <- tryCatch(
+      do.call(
+        dbl_fun,
+        dbl_args
+      ),
+      error = function(e) {
+        stop(
+          "scDblFinder failed for ",
+          gsm,
+          ": ",
+          conditionMessage(e)
+        )
+      }
+    )
+
+    result_coldata <- as.data.frame(
+      SummarizedExperiment::colData(
+        sce_result
+      )
+    )
+
+    required_result_columns <- c(
+      "scDblFinder.class",
+      "scDblFinder.score"
+    )
+    missing_result_columns <- setdiff(
+      required_result_columns,
+      names(result_coldata)
+    )
+    if (length(missing_result_columns) > 0L) {
+      stop(
+        "scDblFinder did not return expected column(s) for ",
+        gsm,
+        ": ",
+        paste(
+          missing_result_columns,
+          collapse = ", "
+        )
+      )
+    }
+
+    classes <- as.character(
+      result_coldata$scDblFinder.class
+    )
+    scores <- as.numeric(
+      result_coldata$scDblFinder.score
+    )
+
+    if (
+      length(classes) != length(idx) ||
+      length(scores) != length(idx) ||
+      any(is.na(classes)) ||
+      any(!classes %in% c(
+        "singlet",
+        "doublet"
+      ))
+    ) {
+      stop(
+        "Invalid scDblFinder output for ",
+        gsm,
+        "."
+      )
+    }
+
+    sample_calls <- data.table(
+      cell = colnames(sample_counts),
+      sample_accession = gsm,
+      condition = as.character(
+        metadata$condition[idx]
+      ),
+      doublet_class = classes,
+      doublet_score = scores
+    )
+    call_records[[gsm]] <- sample_calls
+
+    sample_summary <- sample_calls[
+      ,
+      .(
+        cells = .N
+      ),
+      by = .(
+        sample_accession,
+        condition,
+        doublet_class
+      )
+    ]
+    sample_summary[
+      ,
+      fraction := cells / sum(cells),
+      by = sample_accession
+    ]
+    summary_records[[gsm]] <-
+      sample_summary
+  }
+
+  calls <- rbindlist(
+    call_records,
+    use.names = TRUE,
+    fill = TRUE
+  )
+  summary <- rbindlist(
+    summary_records,
+    use.names = TRUE,
+    fill = TRUE
+  )
+
+  list(
+    calls = calls,
+    summary = summary
+  )
+}
+
+doublet_result <- run_scdblfinder_by_sample(
+  cardiac
 )
-rownames(coldata) <- coldata$sample_accession
-coldata <- coldata[
-  colnames(count_matrix_filtered),
+doublet_calls <- doublet_result$calls
+doublet_summary <- doublet_result$summary
+
+doublet_rates <- doublet_summary[
   ,
-  drop = FALSE
+  .(
+    total_cells = sum(cells),
+    predicted_doublets = sum(
+      cells[
+        doublet_class ==
+          "doublet"
+      ]
+    ),
+    predicted_singlets = sum(
+      cells[
+        doublet_class ==
+          "singlet"
+      ]
+    )
+  ),
+  by = .(
+    sample_accession,
+    condition
+  )
+]
+doublet_rates[
+  ,
+  predicted_doublet_fraction :=
+    predicted_doublets /
+      total_cells
 ]
 
-dds <- DESeqDataSetFromMatrix(
-  countData = count_matrix_filtered,
-  colData = coldata,
-  design = ~ group
-)
-dds <- DESeq(
-  dds,
-  minReplicatesForReplace = Inf,
-  quiet = TRUE
-)
-
-vsd <- varianceStabilizingTransformation(
-  dds,
-  blind = FALSE
-)
-vst_matrix <- assay(vsd)
-saveRDS(
-  dds,
-  file.path(
-    DIRS$objects,
-    "GSE237156_DESeq2_dds.rds"
+if (
+  any(
+    doublet_rates$
+      predicted_doublet_fraction >
+      DOUBLETRATE_FATAL_THRESHOLD
   )
-)
-saveRDS(
-  vsd,
-  file.path(
-    DIRS$objects,
-    "GSE237156_DESeq2_vsd.rds"
+) {
+  fwrite(
+    doublet_rates,
+    file.path(
+      DIRS$tables,
+      "FATAL_scDblFinder_doublet_rates.csv"
+    )
   )
-)
+  stop(
+    "At least one sample had a predicted doublet fraction above ",
+    DOUBLETRATE_FATAL_THRESHOLD,
+    ". Inspect the checkpoint and scDblFinder output."
+  )
+}
 
-## PCA.
-variable_genes <- head(
-  order(
-    matrixStats::rowVars(vst_matrix),
-    decreasing = TRUE
+if (
+  any(
+    doublet_rates$
+      predicted_doublet_fraction >
+      DOUBLETRATE_WARNING_THRESHOLD
+  )
+) {
+  high_rate_samples <- doublet_rates[
+    predicted_doublet_fraction >
+      DOUBLETRATE_WARNING_THRESHOLD,
+    sample_accession
+  ]
+  add_warning(
+    "DOUBLETS",
+    paste(
+      high_rate_samples,
+      collapse = ";"
+    ),
+    paste0(
+      "Predicted doublet fraction exceeded ",
+      DOUBLETRATE_WARNING_THRESHOLD,
+      " but remained below the fatal threshold."
+    )
+  )
+}
+
+fwrite(
+  doublet_calls,
+  file.path(
+    DIRS$tables,
+    "07_scDblFinder_cell_calls.csv.gz"
   ),
-  min(1000L, nrow(vst_matrix))
+  compress = "gzip"
 )
-pca_fit <- prcomp(
-  t(vst_matrix[variable_genes, , drop = FALSE]),
-  center = TRUE,
-  scale. = FALSE
+fwrite(
+  doublet_summary,
+  file.path(
+    DIRS$tables,
+    "07A_scDblFinder_class_summary.csv"
+  )
 )
-pca_percent <- (
-  100 *
-    pca_fit$sdev^2 /
-    sum(pca_fit$sdev^2)
+fwrite(
+  doublet_rates,
+  file.path(
+    DIRS$tables,
+    "07B_scDblFinder_rate_summary.csv"
+  )
 )
-pca_dt <- data.table(
-  sample_accession = rownames(pca_fit$x),
-  PC1 = pca_fit$x[, 1L],
-  PC2 = pca_fit$x[, 2L]
+
+doublet_calls <- doublet_calls[
+  match(
+    colnames(cardiac),
+    cell
+  )
+]
+if (
+  any(is.na(doublet_calls$cell)) ||
+  any(
+    doublet_calls$cell !=
+      colnames(cardiac)
+  )
+) {
+  stop(
+    "scDblFinder calls could not be aligned to the Seurat object."
+  )
+}
+
+cardiac$doublet_class <-
+  doublet_calls$doublet_class
+cardiac$doublet_score <-
+  doublet_calls$doublet_score
+
+singlet_cells <- doublet_calls[
+  doublet_class == "singlet",
+  cell
+]
+cardiac <- subset(
+  cardiac,
+  cells = singlet_cells
 )
-pca_dt <- merge(
-  sample_meta[, .(
+cardiac <- join_layers_safe(
+  cardiac,
+  assay = "RNA"
+)
+
+doublet_status <- "COMPLETED_REQUIRED"
+
+post_doublet_counts <- as.data.table(
+  cardiac@meta.data,
+  keep.rownames = "cell"
+)[
+  ,
+  .(
+    retained_singlet_cells = .N
+  ),
+  by = .(
     sample_accession,
-    original_title,
-    group_id,
-    macrophage_subset,
-    diet,
-    drug = drug_factor
-  )],
-  pca_dt,
+    condition
+  )
+]
+post_doublet_counts <- merge(
+  post_doublet_counts,
+  doublet_rates,
+  by = c(
+    "sample_accession",
+    "condition"
+  ),
+  all.x = TRUE
+)
+
+fwrite(
+  post_doublet_counts,
+  file.path(
+    DIRS$tables,
+    "08_post_doublet_cell_counts.csv"
+  )
+)
+
+saveRDS(
+  cardiac,
+  file.path(
+    DIRS$objects,
+    "CHECKPOINT_GSE236585_v3_post_doublet_pre_clustering.rds"
+  )
+)
+
+log_msg(
+  "Mandatory doublet removal completed: ",
+  sum(doublet_rates$predicted_doublets),
+  " predicted doublets removed; ",
+  ncol(cardiac),
+  " singlets retained."
+)
+
+############################################################
+## 7. Normalize and cluster the singlet-only object
+############################################################
+
+log_msg(
+  "Cardiac singlets entering clustering: ",
+  ncol(cardiac),
+  " | genes: ",
+  nrow(cardiac)
+)
+
+cardiac <- NormalizeData(
+  cardiac,
+  normalization.method = "LogNormalize",
+  scale.factor = 10000,
+  verbose = FALSE
+)
+cardiac <- join_layers_safe(
+  cardiac,
+  assay = "RNA"
+)
+cardiac <- FindVariableFeatures(
+  cardiac,
+  selection.method = "vst",
+  nfeatures = N_VARIABLE_FEATURES,
+  verbose = FALSE
+)
+cardiac <- ScaleData(
+  cardiac,
+  vars.to.regress = "percent.mt",
+  verbose = FALSE
+)
+cardiac <- RunPCA(
+  cardiac,
+  npcs = N_PCS,
+  verbose = FALSE
+)
+
+available_pcs <- ncol(
+  Embeddings(
+    cardiac,
+    reduction = "pca"
+  )
+)
+dims_use <- DIMS_USE[
+  DIMS_USE <= available_pcs
+]
+if (length(dims_use) < 10L) {
+  stop(
+    "Fewer than 10 principal components were available."
+  )
+}
+
+cardiac <- FindNeighbors(
+  cardiac,
+  dims = dims_use,
+  verbose = FALSE
+)
+cardiac <- FindClusters(
+  cardiac,
+  resolution = MAJOR_CLUSTER_RESOLUTION,
+  algorithm = 1L,
+  random.seed = 20260714,
+  verbose = FALSE
+)
+cardiac <- RunUMAP(
+  cardiac,
+  dims = dims_use,
+  seed.use = 20260714,
+  verbose = FALSE
+)
+
+pca_stdev <- Stdev(
+  cardiac,
+  reduction = "pca"
+)
+pca_variance <- (
+  pca_stdev^2 /
+    sum(pca_stdev^2)
+)
+pca_variance_table <- data.table(
+  PC = seq_along(pca_stdev),
+  variance_fraction = pca_variance,
+  cumulative_variance =
+    cumsum(pca_variance),
+  used_for_graph =
+    seq_along(pca_stdev) %in%
+      dims_use
+)
+fwrite(
+  pca_variance_table,
+  file.path(
+    DIRS$tables,
+    "09_PCA_variance_and_dimensions.csv"
+  )
+)
+
+############################################################
+## 8. Auditable major-cell-type annotation
+############################################################
+
+major_marker_sets <- list(
+  Cardiomyocyte = c(
+    "Tnnt2", "Tnni3", "Myh6",
+    "Myh7", "Actc1", "Ryr2",
+    "Atp2a2", "Pln"
+  ),
+  Fibroblast = c(
+    "Dcn", "Lum", "Col1a1",
+    "Col1a2", "Col3a1", "Pdgfra",
+    "Col14a1", "Mfap5", "Fbln1",
+    "Scara5", "Gfra1", "Smoc2",
+    "Hsd11b1", "Dpep1", "Pi16"
+  ),
+  Endothelial = c(
+    "Pecam1", "Cdh5", "Vwf",
+    "Kdr", "Flt1", "Emcn",
+    "Ptprb", "Egfl7", "Cldn5",
+    "Esam", "Adgrl4", "Kdr"
+  ),
+  Lymphatic_endothelial = c(
+    "Prox1", "Lyve1", "Pdpn",
+    "Flt4", "Ccl21a", "Reln",
+    "Mmrn1"
+  ),
+  Pericyte = c(
+    "Pdgfrb", "Rgs5", "Cspg4",
+    "Notch3", "Kcnj8", "Abcc9",
+    "Cox4i2", "Higd1b"
+  ),
+  Smooth_muscle = c(
+    "Acta2", "Tagln", "Myh11",
+    "Cnn1", "Myl9", "Lmod1",
+    "Myocd", "Smtn"
+  ),
+  Macrophage_Monocyte = c(
+    "Lyz2", "Adgre1", "Csf1r",
+    "Cd68", "Fcgr1", "Apoe",
+    "Tyrobp", "C1qa", "C1qb",
+    "C1qc", "Ms4a7", "Mpeg1"
+  ),
+  Dendritic_cell = c(
+    "Flt3", "Itgax", "Clec10a",
+    "Cd209a", "Clec4a1", "Clec4a3",
+    "H2-Ab1", "H2-Aa", "Cd74"
+  ),
+  Neutrophil = c(
+    "S100a8", "S100a9", "Mpo",
+    "Elane", "Retnlg", "Ly6g",
+    "Csf3r", "Cxcr2", "Mmp8"
+  ),
+  T_NK = c(
+    "Cd3d", "Cd3e", "Cd3g",
+    "Trac", "Trbc1", "Trbc2",
+    "Nkg7", "Klrb1c", "Prf1",
+    "Gzmb", "Lck", "Il7r"
+  ),
+  B_cell = c(
+    "Ms4a1", "Cd79a", "Cd79b",
+    "Cd19", "Pax5", "Fcmr",
+    "Ighd", "Ighm", "Cd37"
+  ),
+  Mast_cell = c(
+    "Kit", "Cpa3", "Tpsb2",
+    "Tpsab1", "Ms4a2", "Fcer1a"
+  ),
+  Epicardial_Mesothelial = c(
+    "Upk3b", "Upk1b", "Msln",
+    "Krt19", "Krt8", "Krt18",
+    "Wt1", "Muc16", "Lrrn4"
+  ),
+  Schwann_Glial = c(
+    "Plp1", "S100b", "Sox10",
+    "Erbb3", "Mpz", "Mbp",
+    "Kcna1", "Gpr37l1", "Chl1",
+    "Cdh19", "Lgi4"
+  ),
+  Platelet_Megakaryocyte = c(
+    "Ppbp", "Pf4", "Gp9",
+    "Itga2b", "Clec1b", "Alox12",
+    "Gp5", "Gp6", "Treml1"
+  ),
+  Erythroid = c(
+    "Hba-a1", "Hba-a2", "Hbb-bs",
+    "Hbb-bt", "Alas2", "Epb41",
+    "Slc25a37", "Bpgm", "Fech"
+  ),
+  Cycling = c(
+    "Mki67", "Top2a", "Cdk1",
+    "Ube2c", "Birc5", "Cenpf",
+    "Pclaf", "Tpx2", "Pbk",
+    "Ccna2", "Cdca8"
+  )
+)
+
+priority_marker_sets <- list(
+  Erythroid = major_marker_sets$Erythroid,
+  Platelet_Megakaryocyte =
+    major_marker_sets$Platelet_Megakaryocyte,
+  Schwann_Glial =
+    major_marker_sets$Schwann_Glial,
+  Cycling_unresolved =
+    major_marker_sets$Cycling,
+  Mast_cell =
+    major_marker_sets$Mast_cell,
+  Neutrophil =
+    major_marker_sets$Neutrophil,
+  B_cell =
+    major_marker_sets$B_cell,
+  T_NK =
+    major_marker_sets$T_NK,
+  Lymphatic_endothelial =
+    major_marker_sets$Lymphatic_endothelial,
+  Epicardial_Mesothelial =
+    major_marker_sets$Epicardial_Mesothelial,
+  Cardiomyocyte =
+    major_marker_sets$Cardiomyocyte,
+  Dendritic_cell = c(
+    "Flt3", "Itgax", "Clec10a",
+    "Cd209a", "Clec4a1", "Clec4a3"
+  ),
+  Macrophage_Monocyte =
+    major_marker_sets$Macrophage_Monocyte,
+  Endothelial =
+    major_marker_sets$Endothelial,
+  Pericyte =
+    major_marker_sets$Pericyte,
+  Smooth_muscle =
+    major_marker_sets$Smooth_muscle,
+  Fibroblast =
+    major_marker_sets$Fibroblast
+)
+
+calculate_cluster_marker_scores <- function(
+  object,
+  marker_sets,
+  cluster_column = "seurat_clusters"
+) {
+  data_matrix <- get_assay_matrix(
+    object,
+    layer = "data",
+    assay = "RNA"
+  )
+  counts_matrix <- get_assay_matrix(
+    object,
+    layer = "counts",
+    assay = "RNA"
+  )
+
+  cell_clusters <- as.character(
+    object@meta.data[
+      colnames(data_matrix),
+      cluster_column
+    ]
+  )
+  cluster_factor <- factor(
+    cell_clusters,
+    levels = sort(
+      unique(cell_clusters)
+    )
+  )
+
+  design <- Matrix::sparse.model.matrix(
+    ~ 0 + cluster_factor
+  )
+  colnames(design) <- levels(
+    cluster_factor
+  )
+
+  cluster_cell_counts <- as.numeric(
+    table(cluster_factor)[
+      levels(cluster_factor)
+    ]
+  )
+
+  cluster_sums <- data_matrix %*% design
+  cluster_means <- sweep(
+    cluster_sums,
+    2L,
+    cluster_cell_counts,
+    "/"
+  )
+
+  all_marker_keys <- unique(
+    gene_key(
+      unlist(
+        marker_sets,
+        use.names = FALSE
+      )
+    )
+  )
+  feature_keys <- gene_key(
+    rownames(data_matrix)
+  )
+  marker_union_idx <- which(
+    feature_keys %in%
+      all_marker_keys
+  )
+
+  marker_detection_fraction <- NULL
+  if (length(marker_union_idx) > 0L) {
+    marker_detection_counts <- (
+      counts_matrix[
+        marker_union_idx,
+        ,
+        drop = FALSE
+      ] > 0
+    ) %*% design
+    marker_detection_fraction <- sweep(
+      marker_detection_counts,
+      2L,
+      cluster_cell_counts,
+      "/"
+    )
+    rownames(marker_detection_fraction) <-
+      rownames(counts_matrix)[
+        marker_union_idx
+      ]
+  }
+
+  score_records <- list()
+  availability_records <- list()
+
+  for (set_name in names(marker_sets)) {
+    requested <- marker_sets[[set_name]]
+    requested_keys <- gene_key(requested)
+    idx <- which(
+      feature_keys %in%
+        requested_keys
+    )
+
+    availability_records[[set_name]] <- data.table(
+      marker_set = set_name,
+      requested_genes =
+        length(unique(requested_keys)),
+      detected_genes = length(idx),
+      detected_gene_symbols = paste(
+        rownames(cluster_means)[idx],
+        collapse = ";"
+      )
+    )
+
+    if (length(idx) == 0L) {
+      mean_expression <- rep(
+        NA_real_,
+        ncol(cluster_means)
+      )
+      mean_detection <- rep(
+        NA_real_,
+        ncol(cluster_means)
+      )
+    } else {
+      mean_expression <- Matrix::colMeans(
+        cluster_means[
+          idx,
+          ,
+          drop = FALSE
+        ]
+      )
+
+      detected_names <-
+        rownames(cluster_means)[idx]
+      detection_idx <- if (
+        is.null(marker_detection_fraction)
+      ) {
+        integer()
+      } else {
+        match(
+          gene_key(detected_names),
+          gene_key(
+            rownames(
+              marker_detection_fraction
+            )
+          )
+        )
+      }
+      detection_idx <- detection_idx[
+        !is.na(detection_idx)
+      ]
+
+      mean_detection <- if (
+        length(detection_idx) > 0L
+      ) {
+        Matrix::colMeans(
+          marker_detection_fraction[
+            detection_idx,
+            ,
+            drop = FALSE
+          ]
+        )
+      } else {
+        rep(
+          NA_real_,
+          ncol(cluster_means)
+        )
+      }
+    }
+
+    combined_score <- mean_expression *
+      sqrt(
+        pmax(
+          mean_detection,
+          0
+        )
+      )
+
+    score_records[[set_name]] <- data.table(
+      seurat_cluster =
+        colnames(cluster_means),
+      marker_set = set_name,
+      raw_marker_score =
+        as.numeric(mean_expression),
+      mean_detection_fraction =
+        as.numeric(mean_detection),
+      combined_marker_score =
+        as.numeric(combined_score)
+    )
+  }
+
+  scores <- rbindlist(
+    score_records,
+    use.names = TRUE,
+    fill = TRUE
+  )
+  availability <- rbindlist(
+    availability_records,
+    use.names = TRUE,
+    fill = TRUE
+  )
+
+  scores[
+    ,
+    standardized_marker_score := {
+      values <- combined_marker_score
+      if (
+        all(!is.finite(values)) ||
+        stats::sd(
+          values,
+          na.rm = TRUE
+        ) == 0
+      ) {
+        rep(0, .N)
+      } else {
+        as.numeric(
+          scale(values)
+        )
+      }
+    },
+    by = marker_set
+  ]
+
+  setorder(
+    scores,
+    seurat_cluster,
+    -standardized_marker_score,
+    -combined_marker_score
+  )
+
+  generic_annotation <- scores[
+    ,
+    {
+      top <- .SD[1L]
+      second <- if (.N >= 2L) {
+        .SD[2L]
+      } else {
+        top
+      }
+
+      list(
+        major_cell_type =
+          top$marker_set,
+        top_standardized_score =
+          top$standardized_marker_score,
+        top_raw_score =
+          top$raw_marker_score,
+        top_detection_fraction =
+          top$mean_detection_fraction,
+        top_combined_score =
+          top$combined_marker_score,
+        second_marker_set =
+          second$marker_set,
+        second_standardized_score =
+          second$standardized_marker_score,
+        score_margin =
+          top$standardized_marker_score -
+            second$standardized_marker_score
+      )
+    },
+    by = seurat_cluster
+  ]
+
+  generic_annotation[
+    ,
+    annotation_confidence := fcase(
+      !is.finite(top_combined_score) |
+        top_combined_score <= 0,
+      "Low",
+
+      score_margin >= 0.75 &
+        top_detection_fraction >= 0.15,
+      "High",
+
+      score_margin >= 0.25,
+      "Moderate",
+
+      default = "Low"
+    )
+  ]
+
+  list(
+    scores = scores,
+    annotation = generic_annotation,
+    availability = availability
+  )
+}
+
+## Cluster markers are descriptive but are also used as auditable
+## evidence for deterministic annotation rules.
+cluster_markers <- tryCatch(
+  FindAllMarkers(
+    cardiac,
+    assay = "RNA",
+    only.pos = TRUE,
+    min.pct = 0.20,
+    logfc.threshold = 0.25,
+    test.use = "wilcox",
+    max.cells.per.ident =
+      MAX_CELLS_PER_CLUSTER_MARKER_TEST,
+    random.seed = 20260714,
+    verbose = FALSE
+  ),
+  error = function(e) {
+    stop(
+      "FindAllMarkers failed during required annotation repair: ",
+      conditionMessage(e)
+    )
+  }
+)
+setDT(cluster_markers)
+
+fc_column <- intersect(
+  c(
+    "avg_log2FC",
+    "avg_logFC"
+  ),
+  names(cluster_markers)
+)[1L]
+if (
+  length(fc_column) != 1L ||
+  is.na(fc_column)
+) {
+  stop(
+    "No supported fold-change column was found in FindAllMarkers output."
+  )
+}
+
+cluster_markers[
+  ,
+  abs_fc_for_order :=
+    abs(get(fc_column))
+]
+setorder(
+  cluster_markers,
+  cluster,
+  p_val_adj,
+  -abs_fc_for_order
+)
+
+top_cluster_markers_annotation <-
+  cluster_markers[
+    ,
+    head(
+      .SD,
+      TOP_MARKERS_FOR_ANNOTATION
+    ),
+    by = cluster
+  ]
+top_cluster_markers <-
+  cluster_markers[
+    ,
+    head(
+      .SD,
+      TOP_MARKERS_PER_CLUSTER_CHECK
+    ),
+    by = cluster
+  ]
+
+write_csv_safe(
+  cluster_markers,
+  file.path(
+    DIRS$tables,
+    "13_cluster_positive_markers.csv.gz"
+  ),
+  compress = TRUE
+)
+write_csv_safe(
+  top_cluster_markers,
+  file.path(
+    DIRS$tables,
+    "14_top_cluster_markers_for_review.csv"
+  )
+)
+
+major_score_result <-
+  calculate_cluster_marker_scores(
+    cardiac,
+    major_marker_sets
+  )
+cluster_score_long <-
+  major_score_result$scores
+generic_cluster_annotation <-
+  major_score_result$annotation
+major_marker_availability <-
+  major_score_result$availability
+
+cluster_meta <- as.data.table(
+  cardiac@meta.data,
+  keep.rownames = "cell"
+)
+cluster_qc <- cluster_meta[
+  ,
+  .(
+    cells = .N,
+    median_nFeature_RNA =
+      median(nFeature_RNA),
+    median_nCount_RNA =
+      median(nCount_RNA),
+    median_percent_mt =
+      median(percent.mt),
+    biological_samples =
+      uniqueN(sample_accession),
+    conditions =
+      uniqueN(condition)
+  ),
+  by = .(
+    seurat_cluster =
+      as.character(seurat_clusters)
+  )
+]
+
+cluster_sample_counts <- cluster_meta[
+  ,
+  .N,
+  by = .(
+    seurat_cluster =
+      as.character(seurat_clusters),
+    sample_accession
+  )
+]
+cluster_sample_balance <- cluster_sample_counts[
+  ,
+  .(
+    maximum_sample_fraction =
+      max(N / sum(N)),
+    dominant_sample =
+      sample_accession[
+        which.max(N)
+      ]
+  ),
+  by = seurat_cluster
+]
+cluster_qc <- merge(
+  cluster_qc,
+  cluster_sample_balance,
+  by = "seurat_cluster",
+  all.x = TRUE
+)
+
+top_gene_lists <- top_cluster_markers_annotation[
+  ,
+  .(
+    top_marker_genes = list(
+      gene_key(gene)
+    ),
+    top_marker_symbols = paste(
+      gene,
+      collapse = ";"
+    ),
+    mitochondrial_top20_fraction =
+      mean(
+        grepl(
+          "^MT-",
+          gene_key(
+            head(
+              gene,
+              20L
+            )
+          )
+        )
+      )
+  ),
+  by = .(
+    seurat_cluster =
+      as.character(cluster)
+  )
+]
+
+priority_hit_records <- list()
+for (cluster_id in sort(
+  unique(
+    as.character(
+      cardiac$seurat_clusters
+    )
+  )
+)) {
+  cluster_genes <- top_gene_lists[
+    seurat_cluster == cluster_id,
+    top_marker_genes
+  ][[1L]]
+
+  for (cell_type in names(
+    priority_marker_sets
+  )) {
+    marker_keys <- unique(
+      gene_key(
+        priority_marker_sets[[
+          cell_type
+        ]]
+      )
+    )
+    hits <- intersect(
+      cluster_genes,
+      marker_keys
+    )
+
+    priority_hit_records[[
+      length(priority_hit_records) + 1L
+    ]] <- data.table(
+      seurat_cluster = cluster_id,
+      candidate_cell_type =
+        cell_type,
+      priority_hit_count =
+        length(hits),
+      priority_hit_genes =
+        paste(hits, collapse = ";")
+    )
+  }
+}
+priority_evidence <- rbindlist(
+  priority_hit_records,
+  use.names = TRUE,
+  fill = TRUE
+)
+
+get_hit_count <- function(
+  cluster_id,
+  cell_type
+) {
+  value <- priority_evidence[
+    seurat_cluster == cluster_id &
+      candidate_cell_type == cell_type,
+    priority_hit_count
+  ]
+  if (length(value) == 0L) 0L else value[1L]
+}
+
+cluster_annotation_records <- list()
+
+for (cluster_id in sort(
+  unique(
+    as.character(
+      cardiac$seurat_clusters
+    )
+  )
+)) {
+  generic <- generic_cluster_annotation[
+    seurat_cluster == cluster_id
+  ]
+  qc_row <- cluster_qc[
+    seurat_cluster == cluster_id
+  ]
+  gene_row <- top_gene_lists[
+    seurat_cluster == cluster_id
+  ]
+
+  label <- NA_character_
+  method <- NA_character_
+  confidence <- NA_character_
+  decisive_hits <- 0L
+  decisive_genes <- ""
+
+  mt_fraction <-
+    gene_row$mitochondrial_top20_fraction[1L]
+
+  apply_rule <- function(
+    candidate,
+    threshold,
+    confidence_if_pass = "High"
+  ) {
+    hits <- get_hit_count(
+      cluster_id,
+      candidate
+    )
+    if (hits >= threshold) {
+      evidence_row <- priority_evidence[
+        seurat_cluster == cluster_id &
+          candidate_cell_type ==
+            candidate
+      ]
+      list(
+        pass = TRUE,
+        label = candidate,
+        hits = hits,
+        genes =
+          evidence_row$priority_hit_genes[1L],
+        confidence =
+          confidence_if_pass
+      )
+    } else {
+      list(pass = FALSE)
+    }
+  }
+
+  if (
+    is.finite(mt_fraction) &&
+    mt_fraction >= 0.45
+  ) {
+    label <- "Low_quality_mitochondrial"
+    method <- "Top-marker mitochondrial dominance"
+    confidence <- "High"
+    decisive_hits <- round(
+      mt_fraction * 20L
+    )
+    decisive_genes <-
+      gene_row$top_marker_symbols[1L]
+  } else {
+    ordered_rules <- list(
+      list("Erythroid", 3L, "High"),
+      list(
+        "Platelet_Megakaryocyte",
+        3L,
+        "High"
+      ),
+      list("Schwann_Glial", 3L, "High"),
+      list(
+        "Cycling_unresolved",
+        4L,
+        "High"
+      ),
+      list("Mast_cell", 2L, "High"),
+      list("Neutrophil", 3L, "High"),
+      list("B_cell", 3L, "High"),
+      list("T_NK", 3L, "High"),
+      list(
+        "Lymphatic_endothelial",
+        3L,
+        "High"
+      ),
+      list(
+        "Epicardial_Mesothelial",
+        3L,
+        "High"
+      ),
+      list(
+        "Cardiomyocyte",
+        3L,
+        "High"
+      ),
+      list(
+        "Dendritic_cell",
+        2L,
+        "Moderate"
+      ),
+      list(
+        "Macrophage_Monocyte",
+        3L,
+        "High"
+      ),
+      list(
+        "Endothelial",
+        4L,
+        "High"
+      ),
+      list("Pericyte", 3L, "High"),
+      list(
+        "Smooth_muscle",
+        3L,
+        "High"
+      ),
+      list("Fibroblast", 3L, "High")
+    )
+
+    for (rule in ordered_rules) {
+      candidate <- rule[[1L]]
+      threshold <- rule[[2L]]
+      rule_confidence <- rule[[3L]]
+
+      ## Avoid labeling a macrophage-rich cluster as a conventional
+      ## dendritic cluster solely from antigen-presentation genes.
+      if (
+        candidate == "Dendritic_cell" &&
+        get_hit_count(
+          cluster_id,
+          "Macrophage_Monocyte"
+        ) >= 4L
+      ) {
+        next
+      }
+
+      rule_result <- apply_rule(
+        candidate,
+        threshold,
+        rule_confidence
+      )
+
+      if (isTRUE(rule_result$pass)) {
+        label <- rule_result$label
+        method <-
+          "Deterministic top-marker rule"
+        confidence <-
+          rule_result$confidence
+        decisive_hits <-
+          rule_result$hits
+        decisive_genes <-
+          rule_result$genes
+        break
+      }
+    }
+  }
+
+  if (is.na(label)) {
+    score_label <-
+      generic$major_cell_type[1L]
+    if (identical(score_label, "Cycling")) {
+      score_label <- "Cycling_unresolved"
+    }
+    score_margin <-
+      generic$score_margin[1L]
+    combined_score <-
+      generic$top_combined_score[1L]
+    detection_fraction <-
+      generic$top_detection_fraction[1L]
+
+    if (
+      is.finite(combined_score) &&
+      combined_score > 0 &&
+      is.finite(detection_fraction) &&
+      detection_fraction >= 0.10 &&
+      is.finite(score_margin) &&
+      score_margin >= 0.25
+    ) {
+      label <- score_label
+      method <-
+        "Marker-score fallback"
+      confidence <- if (
+        score_margin >= 0.75
+      ) {
+        "Moderate"
+      } else {
+        "Low"
+      }
+    } else {
+      label <- "Unresolved"
+      method <-
+        "Insufficient deterministic or score evidence"
+      confidence <- "Low"
+    }
+  }
+
+  analysis_inclusion <- !label %in%
+    EXCLUDED_FROM_PSEUDOBULK
+
+  manual_review_required <- (
+    confidence == "Low" ||
+      label %in% c(
+        "Unresolved",
+        "Low_quality_mitochondrial",
+        "Cycling_unresolved"
+      ) ||
+      qc_row$maximum_sample_fraction[1L] >
+        0.80
+  )
+
+  cluster_annotation_records[[
+    cluster_id
+  ]] <- data.table(
+    seurat_cluster = cluster_id,
+    major_cell_type = label,
+    annotation_method = method,
+    annotation_confidence =
+      confidence,
+    decisive_priority_hits =
+      decisive_hits,
+    decisive_priority_genes =
+      decisive_genes,
+    marker_score_top =
+      generic$major_cell_type[1L],
+    marker_score_second =
+      generic$second_marker_set[1L],
+    marker_score_margin =
+      generic$score_margin[1L],
+    top_combined_marker_score =
+      generic$top_combined_score[1L],
+    top_detection_fraction =
+      generic$top_detection_fraction[1L],
+    cells = qc_row$cells[1L],
+    median_nFeature_RNA =
+      qc_row$median_nFeature_RNA[1L],
+    median_nCount_RNA =
+      qc_row$median_nCount_RNA[1L],
+    median_percent_mt =
+      qc_row$median_percent_mt[1L],
+    biological_samples =
+      qc_row$biological_samples[1L],
+    conditions =
+      qc_row$conditions[1L],
+    maximum_sample_fraction =
+      qc_row$maximum_sample_fraction[1L],
+    dominant_sample =
+      qc_row$dominant_sample[1L],
+    mitochondrial_top20_fraction =
+      mt_fraction,
+    analysis_inclusion =
+      analysis_inclusion,
+    manual_review_required =
+      manual_review_required,
+    top_marker_symbols =
+      gene_row$top_marker_symbols[1L]
+  )
+}
+
+cluster_annotation <- rbindlist(
+  cluster_annotation_records,
+  use.names = TRUE,
+  fill = TRUE
+)
+
+fwrite(
+  cluster_score_long,
+  file.path(
+    DIRS$tables,
+    "10_major_celltype_cluster_marker_scores.csv"
+  )
+)
+fwrite(
+  cluster_annotation,
+  file.path(
+    DIRS$tables,
+    "11_major_celltype_cluster_annotation.csv"
+  )
+)
+fwrite(
+  major_marker_availability,
+  file.path(
+    DIRS$tables,
+    "12_major_marker_gene_availability.csv"
+  )
+)
+fwrite(
+  priority_evidence,
+  file.path(
+    DIRS$tables,
+    "14A_cluster_priority_marker_evidence.csv"
+  )
+)
+fwrite(
+  cluster_qc,
+  file.path(
+    DIRS$tables,
+    "14B_cluster_QC_and_sample_balance.csv"
+  )
+)
+
+cluster_to_label <- setNames(
+  cluster_annotation$major_cell_type,
+  cluster_annotation$seurat_cluster
+)
+cluster_to_confidence <- setNames(
+  cluster_annotation$annotation_confidence,
+  cluster_annotation$seurat_cluster
+)
+cluster_to_inclusion <- setNames(
+  cluster_annotation$analysis_inclusion,
+  cluster_annotation$seurat_cluster
+)
+cluster_to_review <- setNames(
+  cluster_annotation$manual_review_required,
+  cluster_annotation$seurat_cluster
+)
+
+cardiac$major_cell_type <- unname(
+  cluster_to_label[
+    as.character(
+      cardiac$seurat_clusters
+    )
+  ]
+)
+cardiac$annotation_confidence <- unname(
+  cluster_to_confidence[
+    as.character(
+      cardiac$seurat_clusters
+    )
+  ]
+)
+cardiac$analysis_inclusion <- unname(
+  cluster_to_inclusion[
+    as.character(
+      cardiac$seurat_clusters
+    )
+  ]
+)
+cardiac$annotation_manual_review <- unname(
+  cluster_to_review[
+    as.character(
+      cardiac$seurat_clusters
+    )
+  ]
+)
+
+if (
+  any(is.na(cardiac$major_cell_type)) ||
+  any(!nzchar(cardiac$major_cell_type))
+) {
+  stop(
+    "At least one singlet lacked a revised major-cell-type annotation."
+  )
+}
+
+known_contaminant_audit <- data.table(
+  target_class = c(
+    "Schwann_Glial",
+    "Platelet_Megakaryocyte",
+    "Erythroid",
+    "Cycling_unresolved",
+    "Low_quality_mitochondrial"
+  ),
+  identified_clusters = vapply(
+    c(
+      "Schwann_Glial",
+      "Platelet_Megakaryocyte",
+      "Erythroid",
+      "Cycling_unresolved",
+      "Low_quality_mitochondrial"
+    ),
+    function(x) {
+      paste(
+        cluster_annotation[
+          major_cell_type == x,
+          seurat_cluster
+        ],
+        collapse = ";"
+      )
+    },
+    character(1)
+  ),
+  identified_cell_count = vapply(
+    c(
+      "Schwann_Glial",
+      "Platelet_Megakaryocyte",
+      "Erythroid",
+      "Cycling_unresolved",
+      "Low_quality_mitochondrial"
+    ),
+    function(x) {
+      sum(
+        cardiac$major_cell_type == x,
+        na.rm = TRUE
+      )
+    },
+    integer(1)
+  )
+)
+fwrite(
+  known_contaminant_audit,
+  file.path(
+    DIRS$tables,
+    "14C_known_misannotation_class_audit.csv"
+  )
+)
+
+log_msg(
+  "Revised major cardiac annotations: ",
+  paste(
+    sort(
+      unique(cardiac$major_cell_type)
+    ),
+    collapse = ", "
+  )
+)
+log_msg(
+  "Clusters requiring manual review: ",
+  sum(
+    cluster_annotation$
+      manual_review_required
+  ),
+  "/",
+  nrow(cluster_annotation)
+)
+
+############################################################
+## 9. Cell-type composition and exploratory sample-level tests
+############################################################
+
+cell_metadata <- as.data.table(
+  cardiac@meta.data,
+  keep.rownames = "cell"
+)
+
+celltype_counts <- cell_metadata[
+  ,
+  .(
+    cell_count = .N
+  ),
+  by = .(
+    sample_accession,
+    condition,
+    major_cell_type
+  )
+]
+celltype_counts[
+  ,
+  total_cells_in_sample := sum(cell_count),
+  by = sample_accession
+]
+celltype_counts[
+  ,
+  cell_fraction :=
+    cell_count / total_cells_in_sample
+]
+
+all_samples <- unique(
+  cell_metadata[
+    ,
+    .(
+      sample_accession,
+      condition
+    )
+  ]
+)
+all_celltypes <- sort(
+  unique(
+    cell_metadata$major_cell_type
+  )
+)
+
+composition_complete <- CJ(
+  sample_accession =
+    all_samples$sample_accession,
+  major_cell_type =
+    all_celltypes,
+  unique = TRUE
+)
+composition_complete <- merge(
+  composition_complete,
+  all_samples,
   by = "sample_accession",
   all.x = TRUE
 )
+composition_complete <- merge(
+  composition_complete,
+  celltype_counts[
+    ,
+    .(
+      sample_accession,
+      major_cell_type,
+      cell_count,
+      total_cells_in_sample,
+      cell_fraction
+    )
+  ],
+  by = c(
+    "sample_accession",
+    "major_cell_type"
+  ),
+  all.x = TRUE
+)
+composition_complete[
+  is.na(cell_count),
+  cell_count := 0L
+]
+sample_totals <- cell_metadata[
+  ,
+  .(
+    total_cells_in_sample = .N
+  ),
+  by = sample_accession
+]
+composition_complete[
+  ,
+  total_cells_in_sample := NULL
+]
+composition_complete <- merge(
+  composition_complete,
+  sample_totals,
+  by = "sample_accession",
+  all.x = TRUE
+)
+composition_complete[
+  is.na(cell_fraction),
+  cell_fraction :=
+    cell_count / total_cells_in_sample
+]
+
 fwrite(
-  pca_dt,
+  composition_complete,
   file.path(
-    DIRS$source,
-    "Fig2A_PCA_source.csv"
+    DIRS$tables,
+    "15_celltype_composition_by_sample.csv"
   )
 )
 
-p_pca <- ggplot(
-  pca_dt,
-  aes(
-    x = PC1,
-    y = PC2,
-    shape = macrophage_subset
+composition_stats <- composition_complete[
+  ,
+  {
+    control_values <- cell_fraction[
+      condition == "Control"
+    ]
+    hfpef_values <- cell_fraction[
+      condition == "HFpEF"
+    ]
+
+    list(
+      control_mean_fraction =
+        mean(control_values),
+      hfpef_mean_fraction =
+        mean(hfpef_values),
+      hfpef_minus_control =
+        mean(hfpef_values) -
+          mean(control_values),
+      hedges_g_HFpEF_vs_Control =
+        hedges_g(
+          hfpef_values,
+          control_values
+        ),
+      wilcoxon_p =
+        safe_wilcox_p(
+          hfpef_values,
+          control_values
+        )
+    )
+  },
+  by = major_cell_type
+]
+composition_stats[
+  ,
+  wilcoxon_fdr := p.adjust(
+    wilcoxon_p,
+    method = "BH"
   )
-) +
-  geom_point(
-    aes(
-      fill = interaction(diet, drug)
-    ),
-    size = 3.5
-  ) +
-  geom_text_repel(
-    aes(label = sample_accession),
-    size = 2.7,
-    max.overlaps = Inf
-  ) +
-  labs(
-    x = sprintf(
-      "PC1 (%.1f%%)",
-      pca_percent[1L]
-    ),
-    y = sprintf(
-      "PC2 (%.1f%%)",
-      pca_percent[2L]
-    ),
-    fill = "Diet × drug",
-    shape = "Macrophage subset",
-    title = "GSE237156 sample-level variance-stabilized PCA"
-  ) +
-  theme_bw(base_size = 11)
-
-ggsave(
+]
+fwrite(
+  composition_stats,
   file.path(
-    DIRS$figures,
-    "Fig2A_GSE237156_PCA.png"
-  ),
-  p_pca,
-  width = 9,
-  height = 7,
-  dpi = 300
-)
-ggsave(
-  file.path(
-    DIRS$figures,
-    "Fig2A_GSE237156_PCA.pdf"
-  ),
-  p_pca,
-  width = 9,
-  height = 7
+    DIRS$tables,
+    "16_celltype_composition_exploratory_statistics.csv"
+  )
 )
 
-## Library-size and detection plot.
-qc_long <- melt(
-  sample_qc,
+############################################################
+## 10. Score Stage 2 signed programs in individual cells
+############################################################
+
+match_signature_genes <- function(
+  requested_genes,
+  available_features
+) {
+  requested_keys <- gene_key(
+    requested_genes
+  )
+  available_keys <- gene_key(
+    available_features
+  )
+
+  idx <- match(
+    requested_keys,
+    available_keys
+  )
+  idx <- idx[!is.na(idx)]
+  unique(
+    available_features[idx]
+  )
+}
+
+add_signed_program_scores <- function(
+  object,
+  signature_sets
+) {
+  data_matrix <- get_assay_matrix(
+    object,
+    layer = "data",
+    assay = "RNA"
+  )
+  available_features <- rownames(
+    data_matrix
+  )
+
+  coverage_records <- list()
+
+  for (set_name in names(signature_sets)) {
+    requested_up <-
+      signature_sets[[set_name]]$up
+    requested_down <-
+      signature_sets[[set_name]]$down
+
+    present_up <- match_signature_genes(
+      requested_up,
+      available_features
+    )
+    present_down <- match_signature_genes(
+      requested_down,
+      available_features
+    )
+
+    if (length(present_up) > 0L) {
+      up_score <- Matrix::colMeans(
+        data_matrix[
+          present_up,
+          ,
+          drop = FALSE
+        ]
+      )
+    } else {
+      up_score <- rep(
+        NA_real_,
+        ncol(data_matrix)
+      )
+    }
+
+    if (length(present_down) > 0L) {
+      down_score <- Matrix::colMeans(
+        data_matrix[
+          present_down,
+          ,
+          drop = FALSE
+        ]
+      )
+    } else {
+      down_score <- rep(
+        NA_real_,
+        ncol(data_matrix)
+      )
+    }
+
+    net_score <- up_score - down_score
+
+    up_column <- paste0(
+      "score_",
+      set_name,
+      "_up"
+    )
+    down_column <- paste0(
+      "score_",
+      set_name,
+      "_down"
+    )
+    net_column <- paste0(
+      "score_",
+      set_name,
+      "_net"
+    )
+
+    object[[up_column]] <-
+      as.numeric(up_score)
+    object[[down_column]] <-
+      as.numeric(down_score)
+    object[[net_column]] <-
+      as.numeric(net_score)
+
+    coverage_records[[set_name]] <- data.table(
+      signature_name = set_name,
+      requested_up_genes =
+        length(unique(gene_key(requested_up))),
+      detected_up_genes =
+        length(present_up),
+      requested_down_genes =
+        length(unique(gene_key(requested_down))),
+      detected_down_genes =
+        length(present_down),
+      detected_up_symbols =
+        paste(present_up, collapse = ";"),
+      detected_down_symbols =
+        paste(present_down, collapse = ";"),
+      net_score_column = net_column
+    )
+  }
+
+  list(
+    object = object,
+    coverage = rbindlist(
+      coverage_records,
+      use.names = TRUE,
+      fill = TRUE
+    )
+  )
+}
+
+scored_result <- add_signed_program_scores(
+  cardiac,
+  signature_sets
+)
+cardiac <- scored_result$object
+signature_coverage <- scored_result$coverage
+
+fwrite(
+  signature_coverage,
+  file.path(
+    DIRS$tables,
+    "17_signature_gene_coverage_in_GSE236585.csv"
+  )
+)
+
+primary_signature_names <- c(
+  paste0(
+    "Ccr2pos_Top",
+    PRIMARY_SIGNATURE_SIZE
+  ),
+  paste0(
+    "Ccr2neg_Top",
+    PRIMARY_SIGNATURE_SIZE
+  ),
+  paste0(
+    "CrossSubset_Top",
+    PRIMARY_SIGNATURE_SIZE
+  )
+)
+primary_score_columns <- paste0(
+  "score_",
+  primary_signature_names,
+  "_net"
+)
+
+if (
+  any(!primary_score_columns %in%
+        names(cardiac@meta.data))
+) {
+  stop(
+    "One or more primary signature score columns were not generated."
+  )
+}
+
+score_columns_all <- grep(
+  "^score_.*_net$",
+  names(cardiac@meta.data),
+  value = TRUE
+)
+
+cell_score_summary <- as.data.table(
+  cardiac@meta.data,
+  keep.rownames = "cell"
+)[
+  analysis_inclusion == TRUE,
+  c(
+    list(
+      cell_count = .N
+    ),
+    lapply(
+      .SD,
+      mean,
+      na.rm = TRUE
+    )
+  ),
+  by = .(
+    sample_accession,
+    condition,
+    major_cell_type
+  ),
+  .SDcols = score_columns_all
+]
+fwrite(
+  cell_score_summary,
+  file.path(
+    DIRS$tables,
+    "18_sample_celltype_mean_cell_level_scores.csv"
+  )
+)
+
+cell_score_long <- melt(
+  cell_score_summary,
   id.vars = c(
     "sample_accession",
-    "original_title",
-    "group_id",
-    "macrophage_subset",
-    "diet",
-    "drug"
+    "condition",
+    "major_cell_type",
+    "cell_count"
   ),
-  measure.vars = c(
-    "library_size_rounded",
-    "detected_count_ge_10"
+  measure.vars = score_columns_all,
+  variable.name = "score_column",
+  value.name = "mean_cell_score"
+)
+cell_score_long[
+  ,
+  signature_name := sub(
+    "^score_",
+    "",
+    sub(
+      "_net$",
+      "",
+      score_column
+    )
+  )
+]
+
+cell_score_stats <- cell_score_long[
+  ,
+  {
+    control_values <-
+      mean_cell_score[
+        condition == "Control"
+      ]
+    hfpef_values <-
+      mean_cell_score[
+        condition == "HFpEF"
+      ]
+
+    list(
+      control_mean =
+        mean(control_values),
+      hfpef_mean =
+        mean(hfpef_values),
+      hfpef_minus_control =
+        mean(hfpef_values) -
+          mean(control_values),
+      hedges_g_HFpEF_vs_Control =
+        hedges_g(
+          hfpef_values,
+          control_values
+        ),
+      wilcoxon_p =
+        safe_wilcox_p(
+          hfpef_values,
+          control_values
+        ),
+      control_samples =
+        sum(is.finite(control_values)),
+      hfpef_samples =
+        sum(is.finite(hfpef_values))
+    )
+  },
+  by = .(
+    major_cell_type,
+    signature_name
+  )
+]
+cell_score_stats[
+  ,
+  wilcoxon_fdr := p.adjust(
+    wilcoxon_p,
+    method = "BH"
   ),
-  variable.name = "metric",
-  value.name = "value"
+  by = signature_name
+]
+fwrite(
+  cell_score_stats,
+  file.path(
+    DIRS$tables,
+    "19_sample_level_cell_score_statistics.csv"
+  )
+)
+
+############################################################
+## 11. Build sample-by-cell-type pseudobulk count matrices
+############################################################
+
+aggregate_sparse_counts <- function(
+  object,
+  group_columns
+) {
+  object <- join_layers_safe(
+    object,
+    assay = "RNA"
+  )
+  counts <- get_assay_matrix(
+    object,
+    layer = "counts",
+    assay = "RNA"
+  )
+
+  meta <- as.data.table(
+    object@meta.data,
+    keep.rownames = "cell"
+  )
+  meta <- meta[
+    match(
+      colnames(counts),
+      cell
+    )
+  ]
+
+  if (any(is.na(meta$cell))) {
+    stop(
+      "Cell metadata could not be aligned to the count matrix."
+    )
+  }
+
+  group_text <- do.call(
+    paste,
+    c(
+      meta[, ..group_columns],
+      sep = "||"
+    )
+  )
+  group_factor <- factor(
+    group_text,
+    levels = unique(group_text)
+  )
+
+  design <- Matrix::sparse.model.matrix(
+    ~ 0 + group_factor
+  )
+  colnames(design) <- levels(
+    group_factor
+  )
+
+  aggregated <- counts %*% design
+  colnames(aggregated) <- levels(
+    group_factor
+  )
+
+  ## Build grouping metadata explicitly. Combining a character vector of
+  ## column names with list(pseudobulk_id = group_text) under with=FALSE is
+  ## invalid data.table syntax.
+  group_meta <- copy(
+    meta[
+      ,
+      ..group_columns
+    ]
+  )
+  group_meta[, pseudobulk_id := group_text]
+  group_meta <- unique(group_meta)
+
+  cell_counts <- data.table(
+    pseudobulk_id = levels(
+      group_factor
+    ),
+    cells = as.integer(
+      table(group_factor)[
+        levels(group_factor)
+      ]
+    )
+  )
+
+  group_meta <- merge(
+    group_meta,
+    cell_counts,
+    by = "pseudobulk_id",
+    all.x = TRUE
+  )
+
+  group_meta <- group_meta[
+    match(
+      colnames(aggregated),
+      pseudobulk_id
+    )
+  ]
+
+  list(
+    counts = aggregated,
+    metadata = group_meta
+  )
+}
+
+pseudobulk_major <- aggregate_sparse_counts(
+  cardiac,
+  c(
+    "sample_accession",
+    "condition",
+    "major_cell_type"
+  )
+)
+
+saveRDS(
+  pseudobulk_major$counts,
+  file.path(
+    DIRS$objects,
+    "GSE236585_major_celltype_pseudobulk_counts.rds"
+  )
 )
 fwrite(
-  qc_long,
+  pseudobulk_major$metadata,
   file.path(
-    DIRS$source,
-    "FigS2A_sample_QC_source.csv"
+    DIRS$tables,
+    "20_major_celltype_pseudobulk_metadata.csv"
   )
 )
-p_qc <- ggplot(
-  qc_long,
-  aes(
-    x = sample_accession,
-    y = value,
-    fill = interaction(diet, drug)
+
+pseudobulk_eligibility <- pseudobulk_major$metadata[
+  ,
+  .(
+    pseudobulk_samples = .N,
+    minimum_cells_per_pseudobulk =
+      min(cells),
+    control_samples = sum(
+      condition == "Control" &
+        cells >=
+          MIN_CELLS_PER_SAMPLE_CELLTYPE
+    ),
+    hfpef_samples = sum(
+      condition == "HFpEF" &
+        cells >=
+          MIN_CELLS_PER_SAMPLE_CELLTYPE
+    )
+  ),
+  by = major_cell_type
+]
+pseudobulk_eligibility[
+  ,
+  excluded_by_annotation :=
+    major_cell_type %in%
+      EXCLUDED_FROM_PSEUDOBULK
+]
+pseudobulk_eligibility[
+  ,
+  eligible := (
+    !excluded_by_annotation &
+      control_samples >=
+        MIN_SAMPLES_PER_CONDITION &
+      hfpef_samples >=
+        MIN_SAMPLES_PER_CONDITION
   )
+]
+fwrite(
+  pseudobulk_eligibility,
+  file.path(
+    DIRS$tables,
+    "21_major_celltype_pseudobulk_eligibility.csv"
+  )
+)
+
+eligible_celltypes <- pseudobulk_eligibility[
+  eligible == TRUE,
+  major_cell_type
+]
+
+if (length(eligible_celltypes) < 3L) {
+  stop(
+    "Fewer than three major cell types were eligible for six-sample pseudobulk analysis."
+  )
+}
+
+############################################################
+## 12. Pseudobulk edgeR and limma-voom comparisons
+############################################################
+
+run_celltype_pseudobulk <- function(
+  cell_type,
+  pb_counts,
+  pb_meta
+) {
+  meta_ct <- pb_meta[
+    major_cell_type == cell_type &
+      cells >=
+        MIN_CELLS_PER_SAMPLE_CELLTYPE
+  ]
+  meta_ct[, condition := factor(
+    condition,
+    levels = c("Control", "HFpEF")
+  )]
+  setorder(
+    meta_ct,
+    condition,
+    sample_accession
+  )
+
+  if (
+    sum(meta_ct$condition == "Control") <
+      MIN_SAMPLES_PER_CONDITION ||
+    sum(meta_ct$condition == "HFpEF") <
+      MIN_SAMPLES_PER_CONDITION
+  ) {
+    return(NULL)
+  }
+
+  counts_ct <- pb_counts[
+    ,
+    meta_ct$pseudobulk_id,
+    drop = FALSE
+  ]
+  colnames(counts_ct) <-
+    meta_ct$sample_accession
+
+  y <- edgeR::DGEList(
+    counts = counts_ct,
+    samples = as.data.frame(meta_ct)
+  )
+  keep <- edgeR::filterByExpr(
+    y,
+    group = meta_ct$condition,
+    min.count = PSEUDOBULK_MIN_COUNT
+  )
+  y <- y[
+    keep,
+    ,
+    keep.lib.sizes = FALSE
+  ]
+  y <- edgeR_norm_lib_sizes(y)
+
+  design <- model.matrix(
+    ~ condition,
+    data = meta_ct
+  )
+
+  y <- edgeR::estimateDisp(
+    y,
+    design,
+    robust = TRUE
+  )
+  fit_edge <- edgeR::glmQLFit(
+    y,
+    design,
+    robust = TRUE
+  )
+  test_edge <- edgeR::glmQLFTest(
+    fit_edge,
+    coef = "conditionHFpEF"
+  )
+  edge_tab <- edgeR::topTags(
+    test_edge,
+    n = Inf,
+    sort.by = "none"
+  )$table
+  setDT(
+    edge_tab,
+    keep.rownames = "feature"
+  )
+  edge_out <- edge_tab[
+    ,
+    .(
+      feature,
+      edgeR_logFC = logFC,
+      edgeR_logCPM = logCPM,
+      edgeR_F = F,
+      edgeR_pvalue = PValue,
+      edgeR_padj = FDR
+    )
+  ]
+
+  voom_object <- limma::voom(
+    y,
+    design,
+    plot = FALSE
+  )
+  fit_limma <- limma::lmFit(
+    voom_object,
+    design
+  )
+  fit_limma <- limma::eBayes(
+    fit_limma,
+    robust = TRUE,
+    trend = FALSE
+  )
+  limma_tab <- limma::topTable(
+    fit_limma,
+    coef = "conditionHFpEF",
+    number = Inf,
+    sort.by = "none"
+  )
+  setDT(
+    limma_tab,
+    keep.rownames = "feature"
+  )
+  limma_out <- limma_tab[
+    ,
+    .(
+      feature,
+      limma_logFC = logFC,
+      limma_AveExpr = AveExpr,
+      limma_t = t,
+      limma_pvalue = P.Value,
+      limma_padj = adj.P.Val
+    )
+  ]
+
+  merged <- merge(
+    edge_out,
+    limma_out,
+    by = "feature",
+    all = TRUE
+  )
+  merged[, feature_key := gene_key(feature)]
+  merged[, major_cell_type := cell_type]
+  merged[, edgeR_limma_sign_agreement := (
+    sign(edgeR_logFC) ==
+      sign(limma_logFC)
+  )]
+  merged[, edgeR_formal_fdr_005 := (
+    !is.na(edgeR_padj) &
+      edgeR_padj <= FORMAL_FDR
+  )]
+  merged[, edgeR_exploratory_fdr_010 := (
+    !is.na(edgeR_padj) &
+      edgeR_padj <= EXPLORATORY_FDR
+  )]
+  merged[, limma_formal_fdr_005 := (
+    !is.na(limma_padj) &
+      limma_padj <= FORMAL_FDR
+  )]
+  merged[, limma_exploratory_fdr_010 := (
+    !is.na(limma_padj) &
+      limma_padj <= EXPLORATORY_FDR
+  )]
+
+  summary <- data.table(
+    major_cell_type = cell_type,
+    pseudobulk_samples = nrow(meta_ct),
+    genes_tested = nrow(merged),
+    edgeR_fdr_005_up = sum(
+      merged$edgeR_padj <=
+        FORMAL_FDR &
+        merged$edgeR_logFC > 0,
+      na.rm = TRUE
+    ),
+    edgeR_fdr_005_down = sum(
+      merged$edgeR_padj <=
+        FORMAL_FDR &
+        merged$edgeR_logFC < 0,
+      na.rm = TRUE
+    ),
+    edgeR_fdr_010_up = sum(
+      merged$edgeR_padj <=
+        EXPLORATORY_FDR &
+        merged$edgeR_logFC > 0,
+      na.rm = TRUE
+    ),
+    edgeR_fdr_010_down = sum(
+      merged$edgeR_padj <=
+        EXPLORATORY_FDR &
+        merged$edgeR_logFC < 0,
+      na.rm = TRUE
+    ),
+    limma_fdr_005_up = sum(
+      merged$limma_padj <=
+        FORMAL_FDR &
+        merged$limma_logFC > 0,
+      na.rm = TRUE
+    ),
+    limma_fdr_005_down = sum(
+      merged$limma_padj <=
+        FORMAL_FDR &
+        merged$limma_logFC < 0,
+      na.rm = TRUE
+    ),
+    lfc_pearson = safe_pearson(
+      merged$edgeR_logFC,
+      merged$limma_logFC
+    ),
+    lfc_spearman = safe_spearman(
+      merged$edgeR_logFC,
+      merged$limma_logFC
+    ),
+    sign_agreement = mean(
+      merged$edgeR_limma_sign_agreement,
+      na.rm = TRUE
+    )
+  )
+
+  list(
+    results = merged,
+    summary = summary,
+    y = y,
+    voom = voom_object,
+    metadata = meta_ct
+  )
+}
+
+pseudobulk_results_list <- list()
+pseudobulk_summary_list <- list()
+pseudobulk_objects <- list()
+
+for (ct in eligible_celltypes) {
+  log_msg(
+    "Pseudobulk analysis: ",
+    ct
+  )
+
+  result_ct <- run_celltype_pseudobulk(
+    cell_type = ct,
+    pb_counts =
+      pseudobulk_major$counts,
+    pb_meta =
+      pseudobulk_major$metadata
+  )
+
+  if (!is.null(result_ct)) {
+    pseudobulk_results_list[[ct]] <-
+      result_ct$results
+    pseudobulk_summary_list[[ct]] <-
+      result_ct$summary
+    pseudobulk_objects[[ct]] <- list(
+      y = result_ct$y,
+      voom = result_ct$voom,
+      metadata = result_ct$metadata
+    )
+  }
+}
+
+pseudobulk_results <- rbindlist(
+  pseudobulk_results_list,
+  use.names = TRUE,
+  fill = TRUE
+)
+pseudobulk_summary <- rbindlist(
+  pseudobulk_summary_list,
+  use.names = TRUE,
+  fill = TRUE
+)
+
+if (nrow(pseudobulk_results) == 0L) {
+  stop(
+    "No major-cell-type pseudobulk results were generated."
+  )
+}
+
+fwrite(
+  pseudobulk_results,
+  file.path(
+    DIRS$tables,
+    "22_major_celltype_pseudobulk_DE_edgeR_limma.csv.gz"
+  ),
+  compress = "gzip"
+)
+fwrite(
+  pseudobulk_summary,
+  file.path(
+    DIRS$tables,
+    "23_major_celltype_pseudobulk_DE_summary.csv"
+  )
+)
+saveRDS(
+  pseudobulk_objects,
+  file.path(
+    DIRS$objects,
+    "GSE236585_major_celltype_pseudobulk_model_objects.rds"
+  )
+)
+
+top_pseudobulk_de <- pseudobulk_results[
+  order(
+    major_cell_type,
+    edgeR_padj,
+    -abs(edgeR_logFC)
+  )
+][
+  ,
+  head(
+    .SD,
+    TOP_DE_GENES_PER_CELLTYPE_CHECK
+  ),
+  by = major_cell_type
+]
+fwrite(
+  top_pseudobulk_de,
+  file.path(
+    DIRS$tables,
+    "24_top_pseudobulk_DE_genes_per_celltype.csv"
+  )
+)
+
+############################################################
+## 13. Sample-level pseudobulk program scores
+############################################################
+
+score_pseudobulk_programs <- function(
+  pb_counts,
+  pb_meta,
+  signature_sets,
+  allowed_celltypes
+) {
+  score_records <- list()
+  coverage_records <- list()
+
+  for (ct in intersect(
+    unique(pb_meta$major_cell_type),
+    allowed_celltypes
+  )) {
+    meta_ct <- pb_meta[
+      major_cell_type == ct
+    ]
+    counts_ct <- pb_counts[
+      ,
+      meta_ct$pseudobulk_id,
+      drop = FALSE
+    ]
+    colnames(counts_ct) <-
+      meta_ct$sample_accession
+
+    y <- edgeR::DGEList(
+      counts = counts_ct
+    )
+    y <- edgeR_norm_lib_sizes(y)
+    log_cpm <- edgeR::cpm(
+      y,
+      log = TRUE,
+      prior.count = 2
+    )
+
+    feature_keys <- gene_key(
+      rownames(log_cpm)
+    )
+
+    ## Gene-wise standardization across biological samples within
+    ## each cell type.
+    gene_z <- t(
+      scale(
+        t(log_cpm)
+      )
+    )
+    gene_z[
+      !is.finite(gene_z)
+    ] <- 0
+
+    for (set_name in names(signature_sets)) {
+      up_keys <- gene_key(
+        signature_sets[[set_name]]$up
+      )
+      down_keys <- gene_key(
+        signature_sets[[set_name]]$down
+      )
+
+      up_idx <- which(
+        feature_keys %in% up_keys
+      )
+      down_idx <- which(
+        feature_keys %in% down_keys
+      )
+
+      raw_up <- if (length(up_idx) > 0L) {
+        Matrix::colMeans(
+          log_cpm[
+            up_idx,
+            ,
+            drop = FALSE
+          ]
+        )
+      } else {
+        rep(NA_real_, ncol(log_cpm))
+      }
+
+      raw_down <- if (length(down_idx) > 0L) {
+        Matrix::colMeans(
+          log_cpm[
+            down_idx,
+            ,
+            drop = FALSE
+          ]
+        )
+      } else {
+        rep(NA_real_, ncol(log_cpm))
+      }
+
+      z_up <- if (length(up_idx) > 0L) {
+        colMeans(
+          gene_z[
+            up_idx,
+            ,
+            drop = FALSE
+          ]
+        )
+      } else {
+        rep(NA_real_, ncol(gene_z))
+      }
+
+      z_down <- if (length(down_idx) > 0L) {
+        colMeans(
+          gene_z[
+            down_idx,
+            ,
+            drop = FALSE
+          ]
+        )
+      } else {
+        rep(NA_real_, ncol(gene_z))
+      }
+
+      score_records[[length(score_records) + 1L]] <- data.table(
+        sample_accession =
+          colnames(log_cpm),
+        major_cell_type = ct,
+        signature_name = set_name,
+        raw_up_mean_logCPM =
+          as.numeric(raw_up),
+        raw_down_mean_logCPM =
+          as.numeric(raw_down),
+        raw_net_score =
+          as.numeric(raw_up - raw_down),
+        z_up_score =
+          as.numeric(z_up),
+        z_down_score =
+          as.numeric(z_down),
+        z_net_score =
+          as.numeric(z_up - z_down)
+      )
+
+      coverage_records[[length(coverage_records) + 1L]] <- data.table(
+        major_cell_type = ct,
+        signature_name = set_name,
+        detected_up_genes =
+          length(up_idx),
+        detected_down_genes =
+          length(down_idx)
+      )
+    }
+  }
+
+  scores <- rbindlist(
+    score_records,
+    use.names = TRUE,
+    fill = TRUE
+  )
+  coverage <- unique(
+    rbindlist(
+      coverage_records,
+      use.names = TRUE,
+      fill = TRUE
+    )
+  )
+
+  scores <- merge(
+    scores,
+    unique(
+      pb_meta[
+        ,
+        .(
+          sample_accession,
+          condition
+        )
+      ]
+    ),
+    by = "sample_accession",
+    all.x = TRUE
+  )
+
+  list(
+    scores = scores,
+    coverage = coverage
+  )
+}
+
+pb_score_result <- score_pseudobulk_programs(
+  pseudobulk_major$counts,
+  pseudobulk_major$metadata,
+  signature_sets,
+  eligible_celltypes
+)
+pseudobulk_program_scores <-
+  pb_score_result$scores
+pseudobulk_score_coverage <-
+  pb_score_result$coverage
+
+fwrite(
+  pseudobulk_program_scores,
+  file.path(
+    DIRS$tables,
+    "25_pseudobulk_sample_level_program_scores.csv"
+  )
+)
+fwrite(
+  pseudobulk_score_coverage,
+  file.path(
+    DIRS$tables,
+    "26_pseudobulk_program_gene_coverage.csv"
+  )
+)
+
+pseudobulk_program_stats <-
+  pseudobulk_program_scores[
+    ,
+    {
+      control_values <-
+        z_net_score[
+          condition == "Control"
+        ]
+      hfpef_values <-
+        z_net_score[
+          condition == "HFpEF"
+        ]
+
+      list(
+        control_mean_z_net =
+          mean(control_values),
+        hfpef_mean_z_net =
+          mean(hfpef_values),
+        hfpef_minus_control_z_net =
+          mean(hfpef_values) -
+            mean(control_values),
+        hedges_g_HFpEF_vs_Control =
+          hedges_g(
+            hfpef_values,
+            control_values
+          ),
+        wilcoxon_p =
+          safe_wilcox_p(
+            hfpef_values,
+            control_values
+          ),
+        control_samples =
+          sum(is.finite(control_values)),
+        hfpef_samples =
+          sum(is.finite(hfpef_values))
+      )
+    },
+    by = .(
+      major_cell_type,
+      signature_name
+    )
+  ]
+pseudobulk_program_stats[
+  ,
+  wilcoxon_fdr := p.adjust(
+    wilcoxon_p,
+    method = "BH"
+  ),
+  by = signature_name
+]
+fwrite(
+  pseudobulk_program_stats,
+  file.path(
+    DIRS$tables,
+    "27_pseudobulk_program_statistics.csv"
+  )
+)
+
+############################################################
+## 14. Stage 2 to Stage 3 gene-level concordance
+############################################################
+
+prepare_stage2_concordance_reference <- function(
+  base_table,
+  subset_label
+) {
+  out <- base_table[
+    !is.na(symbol) &
+      nzchar(symbol) &
+      is.finite(disease_lfc)
+  ]
+  out[, feature_key := gene_key(symbol)]
+  setorder(
+    out,
+    within_subset_rank
+  )
+  out <- out[, .SD[1L], by = feature_key]
+  out[
+    ,
+    .(
+      feature_key,
+      subset_source = subset_label,
+      stage2_symbol = symbol,
+      stage2_disease_lfc = disease_lfc,
+      stage2_drug_lfc = drug_lfc,
+      stage2_tier = opposition_tier,
+      stage2_rank =
+        within_subset_rank
+    )
+  ]
+}
+
+stage2_concordance_reference <- rbindlist(
+  list(
+    prepare_stage2_concordance_reference(
+      stage2_pos,
+      "Ccr2_positive"
+    ),
+    prepare_stage2_concordance_reference(
+      stage2_neg,
+      "Ccr2_negative"
+    )
+  ),
+  use.names = TRUE,
+  fill = TRUE
+)
+
+concordance_records <- list()
+for (ct in unique(
+  pseudobulk_results$major_cell_type
+)) {
+  de_ct <- pseudobulk_results[
+    major_cell_type == ct,
+    .(
+      feature_key,
+      stage3_edgeR_logFC =
+        edgeR_logFC,
+      stage3_edgeR_padj =
+        edgeR_padj,
+      stage3_limma_logFC =
+        limma_logFC,
+      stage3_limma_padj =
+        limma_padj
+    )
+  ]
+
+  for (subset_label in c(
+    "Ccr2_positive",
+    "Ccr2_negative"
+  )) {
+    ref <- stage2_concordance_reference[
+      subset_source == subset_label
+    ]
+    merged <- merge(
+      ref,
+      de_ct,
+      by = "feature_key",
+      all = FALSE
+    )
+
+    tier_abc <- merged[
+      stage2_tier %in% SIGNATURE_TIERS
+    ]
+
+    concordance_records[[
+      paste(ct, subset_label, sep = "__")
+    ]] <- data.table(
+      major_cell_type = ct,
+      stage2_subset = subset_label,
+      all_overlap_genes = nrow(merged),
+      tier_ABC_overlap_genes =
+        nrow(tier_abc),
+      all_gene_spearman =
+        safe_spearman(
+          merged$stage2_disease_lfc,
+          merged$stage3_edgeR_logFC
+        ),
+      all_gene_sign_agreement =
+        mean(
+          sign(
+            merged$stage2_disease_lfc
+          ) ==
+            sign(
+              merged$stage3_edgeR_logFC
+            ),
+          na.rm = TRUE
+        ),
+      tier_ABC_spearman =
+        safe_spearman(
+          tier_abc$stage2_disease_lfc,
+          tier_abc$stage3_edgeR_logFC
+        ),
+      tier_ABC_sign_agreement =
+        mean(
+          sign(
+            tier_abc$stage2_disease_lfc
+          ) ==
+            sign(
+              tier_abc$stage3_edgeR_logFC
+            ),
+          na.rm = TRUE
+        ),
+      median_stage3_logFC_stage2_disease_up =
+        median(
+          tier_abc[
+            stage2_disease_lfc > 0,
+            stage3_edgeR_logFC
+          ],
+          na.rm = TRUE
+        ),
+      median_stage3_logFC_stage2_disease_down =
+        median(
+          tier_abc[
+            stage2_disease_lfc < 0,
+            stage3_edgeR_logFC
+          ],
+          na.rm = TRUE
+        ),
+      orientation_difference =
+        median(
+          tier_abc[
+            stage2_disease_lfc > 0,
+            stage3_edgeR_logFC
+          ],
+          na.rm = TRUE
+        ) -
+          median(
+            tier_abc[
+              stage2_disease_lfc < 0,
+              stage3_edgeR_logFC
+            ],
+            na.rm = TRUE
+          )
+    )
+  }
+}
+
+stage2_stage3_concordance <- rbindlist(
+  concordance_records,
+  use.names = TRUE,
+  fill = TRUE
+)
+fwrite(
+  stage2_stage3_concordance,
+  file.path(
+    DIRS$tables,
+    "28_stage2_stage3_gene_level_concordance.csv"
+  )
+)
+
+############################################################
+## 15. Macrophage/monocyte subclustering
+############################################################
+
+macrophage_cells <- rownames(
+  cardiac@meta.data
+)[
+  cardiac$major_cell_type ==
+    "Macrophage_Monocyte"
+]
+
+macrophage_status <- "NOT_RUN"
+macrophage_cluster_annotation <-
+  data.table()
+macrophage_state_composition <-
+  data.table()
+macrophage_state_scores <-
+  data.table()
+macrophage_state_score_stats <-
+  data.table()
+macrophage_markers <- data.table()
+
+if (length(macrophage_cells) >= 200L) {
+  log_msg(
+    "Reclustering ",
+    length(macrophage_cells),
+    " macrophage/monocyte cells."
+  )
+
+  macrophage <- subset(
+    cardiac,
+    cells = macrophage_cells
+  )
+  macrophage <- join_layers_safe(
+    macrophage,
+    assay = "RNA"
+  )
+  macrophage <- NormalizeData(
+    macrophage,
+    verbose = FALSE
+  )
+  macrophage <- FindVariableFeatures(
+    macrophage,
+    nfeatures = min(
+      2500L,
+      nrow(macrophage)
+    ),
+    verbose = FALSE
+  )
+  macrophage <- ScaleData(
+    macrophage,
+    vars.to.regress = "percent.mt",
+    verbose = FALSE
+  )
+  macrophage <- RunPCA(
+    macrophage,
+    npcs = min(
+      30L,
+      N_PCS
+    ),
+    verbose = FALSE
+  )
+
+  macrophage_dims <- seq_len(
+    min(
+      20L,
+      ncol(
+        Embeddings(
+          macrophage,
+          reduction = "pca"
+        )
+      )
+    )
+  )
+
+  macrophage <- FindNeighbors(
+    macrophage,
+    dims = macrophage_dims,
+    verbose = FALSE
+  )
+  macrophage <- FindClusters(
+    macrophage,
+    resolution =
+      MACROPHAGE_CLUSTER_RESOLUTION,
+    algorithm = 1L,
+    random.seed = 20260714,
+    verbose = FALSE
+  )
+  macrophage <- RunUMAP(
+    macrophage,
+    dims = macrophage_dims,
+    seed.use = 20260714,
+    verbose = FALSE
+  )
+
+  macrophage_marker_sets <- list(
+    Resident_Timd4_Lyve1 = c(
+      "Timd4", "Lyve1", "Folr2",
+      "Mrc1", "Cd163", "Vsig4",
+      "C1qa", "C1qb", "C1qc"
+    ),
+    Ccr2_Monocyte_like = c(
+      "Ccr2", "Ly6c2", "Plac8",
+      "Chil3", "Ctss", "Lgals3"
+    ),
+    Inflammatory_Il1b = c(
+      "Il1b", "Tnf", "Nfkbia",
+      "Ccl2", "Ccl3", "Cxcl2",
+      "S100a8", "S100a9"
+    ),
+    Spp1_Trem2_Remodeling = c(
+      "Spp1", "Trem2", "Gpnmb",
+      "Fabp5", "Lpl", "Apoe",
+      "Ctsb", "Ctsd"
+    ),
+    Interferon_responsive = c(
+      "Isg15", "Ifit1", "Ifit2",
+      "Ifit3", "Irf7", "Rsad2",
+      "Oas1a", "Stat1"
+    ),
+    Antigen_presentation = c(
+      "H2-Ab1", "H2-Aa", "Cd74",
+      "Ciita", "H2-Eb1"
+    ),
+    Cycling = c(
+      "Mki67", "Top2a", "Stmn1",
+      "Tubb5", "Hmgb2"
+    )
+  )
+
+  macrophage_score_result <-
+    calculate_cluster_marker_scores(
+      macrophage,
+      macrophage_marker_sets
+    )
+
+  macrophage_cluster_annotation <-
+    copy(
+      macrophage_score_result$annotation
+    )
+  setnames(
+    macrophage_cluster_annotation,
+    "major_cell_type",
+    "macrophage_state"
+  )
+  macrophage_cluster_annotation[
+    annotation_confidence == "Low",
+    macrophage_state :=
+      "Unresolved_macrophage_state"
+  ]
+
+  macrophage_cluster_to_state <- setNames(
+    macrophage_cluster_annotation$macrophage_state,
+    macrophage_cluster_annotation$seurat_cluster
+  )
+  macrophage$macrophage_state <-
+    unname(
+      macrophage_cluster_to_state[
+        as.character(
+          macrophage$seurat_clusters
+        )
+      ]
+    )
+
+  fwrite(
+    macrophage_score_result$scores,
+    file.path(
+      DIRS$tables,
+      "29_macrophage_cluster_marker_scores.csv"
+    )
+  )
+  fwrite(
+    macrophage_cluster_annotation,
+    file.path(
+      DIRS$tables,
+      "30_macrophage_cluster_annotation.csv"
+    )
+  )
+  fwrite(
+    macrophage_score_result$availability,
+    file.path(
+      DIRS$tables,
+      "31_macrophage_marker_gene_availability.csv"
+    )
+  )
+
+  macrophage_markers <- tryCatch(
+    FindAllMarkers(
+      macrophage,
+      assay = "RNA",
+      only.pos = TRUE,
+      min.pct = 0.20,
+      logfc.threshold = 0.25,
+      test.use = "wilcox",
+      max.cells.per.ident =
+        MAX_CELLS_PER_CLUSTER_MARKER_TEST,
+      random.seed = 20260714,
+      verbose = FALSE
+    ),
+    error = function(e) {
+      add_warning(
+        "MACROPHAGE_MARKERS",
+        "FindAllMarkers",
+        conditionMessage(e)
+      )
+      data.frame()
+    }
+  )
+  setDT(macrophage_markers)
+  write_csv_safe(
+    macrophage_markers,
+    file.path(
+      DIRS$tables,
+      "32_macrophage_cluster_positive_markers.csv.gz"
+    ),
+    compress = TRUE
+  )
+
+  macrophage_meta <- as.data.table(
+    macrophage@meta.data,
+    keep.rownames = "cell"
+  )
+
+  macrophage_state_composition <- macrophage_meta[
+    ,
+    .(
+      cell_count = .N
+    ),
+    by = .(
+      sample_accession,
+      condition,
+      macrophage_state
+    )
+  ]
+  macrophage_state_composition[
+    ,
+    macrophage_total_cells :=
+      sum(cell_count),
+    by = sample_accession
+  ]
+  macrophage_state_composition[
+    ,
+    state_fraction :=
+      cell_count /
+        macrophage_total_cells
+  ]
+
+  fwrite(
+    macrophage_state_composition,
+    file.path(
+      DIRS$tables,
+      "33_macrophage_state_composition_by_sample.csv"
+    )
+  )
+
+  macrophage_score_columns <- intersect(
+    score_columns_all,
+    names(macrophage_meta)
+  )
+
+  macrophage_state_scores <- macrophage_meta[
+    ,
+    c(
+      list(
+        cell_count = .N
+      ),
+      lapply(
+        .SD,
+        mean,
+        na.rm = TRUE
+      )
+    ),
+    by = .(
+      sample_accession,
+      condition,
+      macrophage_state
+    ),
+    .SDcols = macrophage_score_columns
+  ]
+
+  fwrite(
+    macrophage_state_scores,
+    file.path(
+      DIRS$tables,
+      "34_macrophage_state_sample_level_scores.csv"
+    )
+  )
+
+  macrophage_score_long <- melt(
+    macrophage_state_scores,
+    id.vars = c(
+      "sample_accession",
+      "condition",
+      "macrophage_state",
+      "cell_count"
+    ),
+    measure.vars =
+      macrophage_score_columns,
+    variable.name = "score_column",
+    value.name = "mean_cell_score"
+  )
+  macrophage_score_long[
+    ,
+    signature_name := sub(
+      "^score_",
+      "",
+      sub(
+        "_net$",
+        "",
+        score_column
+      )
+    )
+  ]
+
+  macrophage_state_score_stats <-
+    macrophage_score_long[
+      ,
+      {
+        control_values <-
+          mean_cell_score[
+            condition == "Control"
+          ]
+        hfpef_values <-
+          mean_cell_score[
+            condition == "HFpEF"
+          ]
+
+        list(
+          control_mean =
+            mean(control_values),
+          hfpef_mean =
+            mean(hfpef_values),
+          hfpef_minus_control =
+            mean(hfpef_values) -
+              mean(control_values),
+          hedges_g_HFpEF_vs_Control =
+            hedges_g(
+              hfpef_values,
+              control_values
+            ),
+          wilcoxon_p =
+            safe_wilcox_p(
+              hfpef_values,
+              control_values
+            ),
+          control_samples =
+            sum(is.finite(control_values)),
+          hfpef_samples =
+            sum(is.finite(hfpef_values))
+        )
+      },
+      by = .(
+        macrophage_state,
+        signature_name
+      )
+    ]
+  macrophage_state_score_stats[
+    ,
+    wilcoxon_fdr := p.adjust(
+      wilcoxon_p,
+      method = "BH"
+    ),
+    by = signature_name
+  ]
+
+  fwrite(
+    macrophage_state_score_stats,
+    file.path(
+      DIRS$tables,
+      "35_macrophage_state_score_statistics.csv"
+    )
+  )
+
+  saveRDS(
+    macrophage,
+    file.path(
+      DIRS$objects,
+      "GSE236585_macrophage_subclustered_seurat.rds"
+    )
+  )
+
+  macrophage_status <- "COMPLETED"
+} else {
+  add_warning(
+    "MACROPHAGE",
+    "cell_count",
+    paste0(
+      "Only ",
+      length(macrophage_cells),
+      " macrophage/monocyte cells were annotated; subclustering was skipped."
+    )
+  )
+  macrophage_status <- "INSUFFICIENT_CELLS"
+}
+
+############################################################
+## 16. Save main Seurat object
+############################################################
+
+saveRDS(
+  cardiac,
+  file.path(
+    DIRS$objects,
+    "GSE236585_stage3_annotated_projected_seurat.rds"
+  )
+)
+
+############################################################
+## 17. Figures and source data
+############################################################
+
+major_palette <- c(
+  "Cardiomyocyte" = "#8C564B",
+  "Fibroblast" = "#E377C2",
+  "Endothelial" = "#17BECF",
+  "Lymphatic_endothelial" = "#9EDAE5",
+  "Pericyte" = "#9467BD",
+  "Smooth_muscle" = "#7F7F7F",
+  "Macrophage_Monocyte" = "#D62728",
+  "Dendritic_cell" = "#FF9896",
+  "Neutrophil" = "#BCBD22",
+  "T_NK" = "#1F77B4",
+  "B_cell" = "#AEC7E8",
+  "Mast_cell" = "#FF7F0E",
+  "Epicardial_Mesothelial" = "#2CA02C",
+  "Schwann_Glial" = "#8C6D31",
+  "Platelet_Megakaryocyte" = "#C49C94",
+  "Erythroid" = "#AD494A",
+  "Cycling_unresolved" = "#637939",
+  "Low_quality_mitochondrial" = "#BDBDBD",
+  "Unresolved" = "#525252"
+)
+
+condition_palette <- c(
+  "Control" = "#4C78A8",
+  "HFpEF" = "#E45756"
+)
+
+umap_coordinates <- as.data.table(
+  Embeddings(
+    cardiac,
+    reduction = "umap"
+  ),
+  keep.rownames = "cell"
+)
+umap_coordinates <- merge(
+  umap_coordinates,
+  as.data.table(
+    cardiac@meta.data,
+    keep.rownames = "cell"
+  )[
+    ,
+    c(
+      "cell",
+      "sample_accession",
+      "condition",
+      "seurat_clusters",
+      "major_cell_type",
+      primary_score_columns
+    ),
+    with = FALSE
+  ],
+  by = "cell",
+  all.x = TRUE
+)
+fwrite(
+  umap_coordinates,
+  file.path(
+    DIRS$source,
+    "Fig3A_3B_3D_UMAP_source.csv.gz"
+  ),
+  compress = "gzip"
+)
+
+p_umap_celltype <- DimPlot(
+  cardiac,
+  reduction = "umap",
+  group.by = "major_cell_type",
+  label = TRUE,
+  repel = TRUE,
+  raster = TRUE
 ) +
-  geom_col() +
-  facet_wrap(
-    ~ metric,
-    scales = "free_y",
-    ncol = 1
+  scale_color_manual(
+    values = major_palette,
+    na.value = "grey70"
   ) +
-  coord_flip() +
   labs(
-    x = NULL,
-    y = NULL,
-    fill = "Diet × drug",
-    title = "GSE237156 library and detection metrics"
+    title = "GSE236585 cardiac scRNA-seq",
+    subtitle = "Major cell types assigned by cluster-level canonical-marker scoring",
+    color = "Major cell type"
   ) +
   theme_bw(base_size = 10)
 
-ggsave(
-  file.path(
-    DIRS$figures,
-    "FigS2A_GSE237156_sample_QC.png"
-  ),
-  p_qc,
-  width = 9,
-  height = 9,
-  dpi = 300
+save_plot_bundle(
+  p_umap_celltype,
+  "Fig3A_GSE236585_UMAP_major_cell_types",
+  9,
+  7
 )
 
-## Correlation heatmap.
-sample_cor <- cor(
-  vst_matrix,
-  method = "pearson"
+p_umap_condition <- DimPlot(
+  cardiac,
+  reduction = "umap",
+  group.by = "condition",
+  split.by = "condition",
+  raster = TRUE
+) +
+  scale_color_manual(
+    values = condition_palette
+  ) +
+  labs(
+    title = "GSE236585 cells by biological condition",
+    color = "Condition"
+  ) +
+  theme_bw(base_size = 10)
+
+save_plot_bundle(
+  p_umap_condition,
+  "Fig3B_GSE236585_UMAP_by_condition",
+  11,
+  5.5
 )
+
 fwrite(
-  as.data.table(
-    sample_cor,
-    keep.rownames = "sample_accession"
-  ),
+  composition_complete,
   file.path(
     DIRS$source,
-    "FigS2B_sample_correlation_source.csv"
+    "Fig3C_celltype_composition_source.csv"
+  )
+)
+p_composition <- ggplot(
+  composition_complete,
+  aes(
+    x = sample_accession,
+    y = cell_fraction,
+    fill = major_cell_type
+  )
+) +
+  geom_col(
+    width = 0.78
+  ) +
+  facet_grid(
+    ~ condition,
+    scales = "free_x",
+    space = "free_x"
+  ) +
+  scale_fill_manual(
+    values = major_palette,
+    na.value = "grey70"
+  ) +
+  scale_y_continuous(
+    labels = scales::percent_format(
+      accuracy = 1
+    )
+  ) +
+  labs(
+    x = NULL,
+    y = "Fraction of retained cells",
+    fill = "Major cell type",
+    title = "Sample-level cardiac cell-type composition",
+    subtitle = "Composition is descriptive; inferential comparisons use biological-sample fractions"
+  ) +
+  theme_bw(base_size = 10) +
+  theme(
+    axis.text.x = element_text(
+      angle = 45,
+      hjust = 1
+    )
+  )
+
+save_plot_bundle(
+  p_composition,
+  "Fig3C_GSE236585_celltype_composition",
+  11,
+  6
+)
+
+primary_pos_col <- paste0(
+  "score_Ccr2pos_Top",
+  PRIMARY_SIGNATURE_SIZE,
+  "_net"
+)
+primary_neg_col <- paste0(
+  "score_Ccr2neg_Top",
+  PRIMARY_SIGNATURE_SIZE,
+  "_net"
+)
+
+p_score_umap_pos <- FeaturePlot(
+  cardiac,
+  features = primary_pos_col,
+  reduction = "umap",
+  raster = TRUE
+) +
+  labs(
+    title = paste0(
+      "Projected Ccr2-positive disease-like program (Top",
+      PRIMARY_SIGNATURE_SIZE,
+      ")"
+    ),
+    subtitle = "Higher score indicates expression aligned with the Stage 2 disease-associated direction"
+  ) +
+  theme_bw(base_size = 10)
+
+save_plot_bundle(
+  p_score_umap_pos,
+  "Fig3D_GSE236585_Ccr2pos_program_UMAP",
+  8,
+  6.5
+)
+
+p_score_umap_neg <- FeaturePlot(
+  cardiac,
+  features = primary_neg_col,
+  reduction = "umap",
+  raster = TRUE
+) +
+  labs(
+    title = paste0(
+      "Projected Ccr2-negative disease-like program (Top",
+      PRIMARY_SIGNATURE_SIZE,
+      ")"
+    ),
+    subtitle = "Higher score indicates expression aligned with the Stage 2 disease-associated direction"
+  ) +
+  theme_bw(base_size = 10)
+
+save_plot_bundle(
+  p_score_umap_neg,
+  "FigS3A_GSE236585_Ccr2neg_program_UMAP",
+  8,
+  6.5
+)
+
+primary_program_stats <- pseudobulk_program_stats[
+  signature_name %in%
+    primary_signature_names
+]
+fwrite(
+  primary_program_stats,
+  file.path(
+    DIRS$source,
+    "Fig3E_program_localization_source.csv"
   )
 )
 
-cor_annotation <- data.frame(
-  subset = coldata$macrophage_subset,
-  diet = coldata$diet,
-  drug = coldata$drug
+p_program_localization <- ggplot(
+  primary_program_stats,
+  aes(
+    x = hfpef_minus_control_z_net,
+    y = reorder(
+      major_cell_type,
+      hfpef_minus_control_z_net
+    ),
+    shape = signature_name
+  )
+) +
+  geom_vline(
+    xintercept = 0,
+    linetype = 2
+  ) +
+  geom_point(
+    size = 3
+  ) +
+  facet_wrap(
+    ~ signature_name,
+    scales = "free_y"
+  ) +
+  labs(
+    x = "HFpEF − Control sample-level pseudobulk program score",
+    y = NULL,
+    shape = "Program",
+    title = "Cell-type localization of Stage 2 disease-like programs",
+    subtitle = "Positive values indicate higher disease-like program activity in HFpEF biological samples"
+  ) +
+  theme_bw(base_size = 10)
+
+save_plot_bundle(
+  p_program_localization,
+  "Fig3E_stage2_program_localization_by_celltype",
+  12,
+  7
 )
-rownames(cor_annotation) <- rownames(coldata)
+
+fwrite(
+  stage2_stage3_concordance,
+  file.path(
+    DIRS$source,
+    "Fig3F_stage2_stage3_concordance_source.csv"
+  )
+)
+p_concordance <- ggplot(
+  stage2_stage3_concordance,
+  aes(
+    x = tier_ABC_spearman,
+    y = reorder(
+      major_cell_type,
+      tier_ABC_spearman
+    ),
+    shape = stage2_subset
+  )
+) +
+  geom_vline(
+    xintercept = 0,
+    linetype = 2
+  ) +
+  geom_point(
+    size = 3
+  ) +
+  facet_wrap(
+    ~ stage2_subset
+  ) +
+  labs(
+    x = "Spearman correlation:\nStage 2 disease log2FC vs Stage 3 HFpEF pseudobulk log2FC",
+    y = NULL,
+    shape = "Stage 2 subset",
+    title = "Gene-level cross-dataset concordance by cardiac cell type"
+  ) +
+  theme_bw(base_size = 10)
+
+save_plot_bundle(
+  p_concordance,
+  "Fig3F_stage2_stage3_gene_level_concordance",
+  11,
+  7
+)
+
+if (exists("macrophage") &&
+    macrophage_status == "COMPLETED") {
+  macrophage_umap <- as.data.table(
+    Embeddings(
+      macrophage,
+      reduction = "umap"
+    ),
+    keep.rownames = "cell"
+  )
+  macrophage_umap <- merge(
+    macrophage_umap,
+    as.data.table(
+      macrophage@meta.data,
+      keep.rownames = "cell"
+    )[
+      ,
+      .(
+        cell,
+        sample_accession,
+        condition,
+        seurat_clusters,
+        macrophage_state
+      )
+    ],
+    by = "cell",
+    all.x = TRUE
+  )
+  fwrite(
+    macrophage_umap,
+    file.path(
+      DIRS$source,
+      "Fig3G_macrophage_UMAP_source.csv"
+    )
+  )
+
+  p_macrophage_umap <- DimPlot(
+    macrophage,
+    reduction = "umap",
+    group.by = "macrophage_state",
+    label = TRUE,
+    repel = TRUE,
+    raster = TRUE
+  ) +
+    labs(
+      title = "GSE236585 macrophage/monocyte subclustering",
+      subtitle = "State labels are marker-defined discovery candidates",
+      color = "Macrophage state"
+    ) +
+    theme_bw(base_size = 10)
+
+  save_plot_bundle(
+    p_macrophage_umap,
+    "Fig3G_GSE236585_macrophage_state_UMAP",
+    9,
+    7
+  )
+
+  primary_macrophage_scores <-
+    macrophage_state_scores[
+      ,
+      c(
+        "sample_accession",
+        "condition",
+        "macrophage_state",
+        "cell_count",
+        primary_pos_col,
+        primary_neg_col
+      ),
+      with = FALSE
+    ]
+  primary_macrophage_long <- melt(
+    primary_macrophage_scores,
+    id.vars = c(
+      "sample_accession",
+      "condition",
+      "macrophage_state",
+      "cell_count"
+    ),
+    measure.vars = c(
+      primary_pos_col,
+      primary_neg_col
+    ),
+    variable.name = "program",
+    value.name = "sample_mean_score"
+  )
+  fwrite(
+    primary_macrophage_long,
+    file.path(
+      DIRS$source,
+      "Fig3H_macrophage_state_program_source.csv"
+    )
+  )
+
+  p_macrophage_scores <- ggplot(
+    primary_macrophage_long,
+    aes(
+      x = condition,
+      y = sample_mean_score,
+      shape = condition
+    )
+  ) +
+    geom_point(
+      size = 2.8,
+      position = position_jitter(
+        width = 0.08,
+        height = 0
+      )
+    ) +
+    facet_grid(
+      macrophage_state ~ program,
+      scales = "free_y"
+    ) +
+    scale_shape_manual(
+      values = c(
+        "Control" = 16,
+        "HFpEF" = 17
+      )
+    ) +
+    labs(
+      x = NULL,
+      y = "Sample-level mean disease-like score",
+      shape = "Condition",
+      title = "Stage 2 programs across macrophage-state candidates",
+      subtitle = "Each point is one biological sample"
+    ) +
+    theme_bw(base_size = 9) +
+    theme(
+      axis.text.x = element_text(
+        angle = 30,
+        hjust = 1
+      )
+    )
+
+  save_plot_bundle(
+    p_macrophage_scores,
+    "Fig3H_macrophage_state_sample_level_program_scores",
+    12,
+    11
+  )
+}
+
+## QC figures.
+qc_plot_data <- as.data.table(
+  cardiac@meta.data,
+  keep.rownames = "cell"
+)[
+  ,
+  .(
+    cell,
+    sample_accession,
+    condition,
+    nFeature_RNA,
+    nCount_RNA,
+    percent.mt
+  )
+]
+fwrite(
+  qc_plot_data,
+  file.path(
+    DIRS$source,
+    "FigS3B_QC_violin_source.csv.gz"
+  ),
+  compress = "gzip"
+)
+
+p_qc <- VlnPlot(
+  cardiac,
+  features = c(
+    "nFeature_RNA",
+    "nCount_RNA",
+    "percent.mt"
+  ),
+  group.by = "sample_accession",
+  pt.size = 0,
+  ncol = 3
+) &
+  theme_bw(base_size = 8) &
+  theme(
+    axis.text.x = element_text(
+      angle = 50,
+      hjust = 1
+    )
+  )
+
+save_plot_bundle(
+  p_qc,
+  "FigS3B_GSE236585_QC_violin",
+  14,
+  5
+)
+
+## Major-cell-type marker score heatmap.
+marker_heat <- dcast(
+  cluster_score_long,
+  marker_set ~ seurat_cluster,
+  value.var = "standardized_marker_score"
+)
+marker_heat_matrix <- as.matrix(
+  marker_heat[
+    ,
+    -1,
+    with = FALSE
+  ]
+)
+rownames(marker_heat_matrix) <-
+  marker_heat$marker_set
+write_csv_safe(
+  marker_heat,
+  file.path(
+    DIRS$source,
+    "FigS3C_major_marker_score_heatmap_source.csv"
+  )
+)
 
 png(
   file.path(
     DIRS$figures,
-    "FigS2B_GSE237156_sample_correlation.png"
+    "FigS3C_major_marker_score_heatmap.png"
   ),
-  width = 2800,
-  height = 2500,
+  width = 3000,
+  height = 2400,
   res = 300
 )
 pheatmap(
-  sample_cor,
-  annotation_col = cor_annotation,
-  annotation_row = cor_annotation,
+  marker_heat_matrix,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
   border_color = NA,
-  main = "Variance-stabilized sample correlation"
+  main = "Cluster-level canonical-marker scores"
 )
 dev.off()
 
 pdf(
   file.path(
     DIRS$figures,
-    "FigS2B_GSE237156_sample_correlation.pdf"
+    "FigS3C_major_marker_score_heatmap.pdf"
   ),
   width = 10,
-  height = 9
+  height = 8
 )
 pheatmap(
-  sample_cor,
-  annotation_col = cor_annotation,
-  annotation_row = cor_annotation,
+  marker_heat_matrix,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
   border_color = NA,
-  main = "Variance-stabilized sample correlation"
+  main = "Cluster-level canonical-marker scores"
 )
 dev.off()
 
 ############################################################
-## 9. Define primary and supporting contrasts
-############################################################
-
-contrast_definitions <- rbindlist(list(
-  data.table(
-    subset = "Ccr2_positive",
-    effect = "Disease_under_vehicle",
-    contrast = "Ccr2_positive_HFD_Vehicle_vs_CD_Vehicle",
-    numerator = "Ccr2_positive__HFD__Vehicle",
-    denominator = "Ccr2_positive__CD__Vehicle",
-    role = "Primary disease-associated effect"
-  ),
-  data.table(
-    subset = "Ccr2_positive",
-    effect = "Drug_under_HFD",
-    contrast = "Ccr2_positive_HFD_Dapagliflozin_vs_HFD_Vehicle",
-    numerator = "Ccr2_positive__HFD__Dapagliflozin",
-    denominator = "Ccr2_positive__HFD__Vehicle",
-    role = "Primary drug-reversal effect"
-  ),
-  data.table(
-    subset = "Ccr2_positive",
-    effect = "Drug_under_CD",
-    contrast = "Ccr2_positive_CD_Dapagliflozin_vs_CD_Vehicle",
-    numerator = "Ccr2_positive__CD__Dapagliflozin",
-    denominator = "Ccr2_positive__CD__Vehicle",
-    role = "Drug effect in control-diet context"
-  ),
-  data.table(
-    subset = "Ccr2_positive",
-    effect = "Disease_under_drug",
-    contrast = "Ccr2_positive_HFD_Dapagliflozin_vs_CD_Dapagliflozin",
-    numerator = "Ccr2_positive__HFD__Dapagliflozin",
-    denominator = "Ccr2_positive__CD__Dapagliflozin",
-    role = "Residual disease effect under drug"
-  ),
-  data.table(
-    subset = "Ccr2_negative",
-    effect = "Disease_under_vehicle",
-    contrast = "Ccr2_negative_HFD_Vehicle_vs_CD_Vehicle",
-    numerator = "Ccr2_negative__HFD__Vehicle",
-    denominator = "Ccr2_negative__CD__Vehicle",
-    role = "Primary disease-associated effect"
-  ),
-  data.table(
-    subset = "Ccr2_negative",
-    effect = "Drug_under_HFD",
-    contrast = "Ccr2_negative_HFD_Dapagliflozin_vs_HFD_Vehicle",
-    numerator = "Ccr2_negative__HFD__Dapagliflozin",
-    denominator = "Ccr2_negative__HFD__Vehicle",
-    role = "Primary drug-reversal effect"
-  ),
-  data.table(
-    subset = "Ccr2_negative",
-    effect = "Drug_under_CD",
-    contrast = "Ccr2_negative_CD_Dapagliflozin_vs_CD_Vehicle",
-    numerator = "Ccr2_negative__CD__Dapagliflozin",
-    denominator = "Ccr2_negative__CD__Vehicle",
-    role = "Drug effect in control-diet context"
-  ),
-  data.table(
-    subset = "Ccr2_negative",
-    effect = "Disease_under_drug",
-    contrast = "Ccr2_negative_HFD_Dapagliflozin_vs_CD_Dapagliflozin",
-    numerator = "Ccr2_negative__HFD__Dapagliflozin",
-    denominator = "Ccr2_negative__CD__Dapagliflozin",
-    role = "Residual disease effect under drug"
-  )
-))
-fwrite(
-  contrast_definitions,
-  file.path(
-    DIRS$tables,
-    "07_contrast_definitions.csv"
-  )
-)
-
-missing_levels <- setdiff(
-  unique(
-    c(
-      contrast_definitions$numerator,
-      contrast_definitions$denominator
-    )
-  ),
-  levels(coldata$group)
-)
-if (length(missing_levels) > 0L) {
-  stop(
-    "Contrast group level(s) absent from DESeq2 design: ",
-    paste(missing_levels, collapse = ", ")
-  )
-}
-
-############################################################
-## 10. DESeq2 primary analysis
-############################################################
-
-deseq_results_list <- list()
-for (i in seq_len(nrow(contrast_definitions))) {
-  cd <- contrast_definitions[i]
-  log_msg(
-    "DESeq2 contrast ",
-    i,
-    "/",
-    nrow(contrast_definitions),
-    ": ",
-    cd$contrast
-  )
-  deseq_results_list[[cd$contrast]] <- make_deseq_result(
-    dds = dds,
-    contrast_name = cd$contrast,
-    numerator = cd$numerator,
-    denominator = cd$denominator
-  )
-}
-
-deseq_all <- rbindlist(
-  deseq_results_list,
-  use.names = TRUE,
-  fill = TRUE
-)
-deseq_all <- merge(
-  deseq_all,
-  gene_annotation,
-  by = "gene_id",
-  all.x = TRUE
-)
-
-fwrite(
-  deseq_all,
-  file.path(
-    DIRS$tables,
-    "08_DESeq2_all_contrasts.csv.gz"
-  ),
-  compress = "gzip"
-)
-
-deseq_summary <- rbindlist(
-  lapply(
-    deseq_results_list,
-    summarize_contrast,
-    method_name = "DESeq2"
-  )
-)
-
-############################################################
-## 11. edgeR quasi-likelihood sensitivity analysis
-############################################################
-
-edge_group <- factor(
-  coldata$group,
-  levels = levels(coldata$group)
-)
-y <- DGEList(
-  counts = count_matrix,
-  group = edge_group
-)
-keep_edge <- filterByExpr(
-  y,
-  group = edge_group,
-  min.count = MIN_COUNT
-)
-y <- y[keep_edge, , keep.lib.sizes = FALSE]
-y <- calcNormFactors(y)
-
-design_edge <- model.matrix(
-  ~ 0 + edge_group
-)
-colnames(design_edge) <- levels(edge_group)
-rownames(design_edge) <- rownames(coldata)
-
-y <- estimateDisp(
-  y,
-  design_edge,
-  robust = TRUE
-)
-fit_edge <- glmQLFit(
-  y,
-  design_edge,
-  robust = TRUE
-)
-saveRDS(
-  y,
-  file.path(
-    DIRS$objects,
-    "GSE237156_edgeR_DGEList.rds"
-  )
-)
-saveRDS(
-  fit_edge,
-  file.path(
-    DIRS$objects,
-    "GSE237156_edgeR_QL_fit.rds"
-  )
-)
-
-edger_results_list <- list()
-for (i in seq_len(nrow(contrast_definitions))) {
-  cd <- contrast_definitions[i]
-  log_msg(
-    "edgeR QL contrast ",
-    i,
-    "/",
-    nrow(contrast_definitions),
-    ": ",
-    cd$contrast
-  )
-  edger_results_list[[cd$contrast]] <- make_edger_result(
-    fit = fit_edge,
-    contrast_name = cd$contrast,
-    numerator = cd$numerator,
-    denominator = cd$denominator,
-    design_columns = colnames(design_edge)
-  )
-}
-
-edger_all <- rbindlist(
-  edger_results_list,
-  use.names = TRUE,
-  fill = TRUE
-)
-edger_all <- merge(
-  edger_all,
-  gene_annotation,
-  by = "gene_id",
-  all.x = TRUE
-)
-fwrite(
-  edger_all,
-  file.path(
-    DIRS$tables,
-    "09_edgeR_QL_all_contrasts.csv.gz"
-  ),
-  compress = "gzip"
-)
-
-edger_summary <- rbindlist(
-  lapply(
-    edger_results_list,
-    summarize_contrast,
-    method_name = "edgeR_QL"
-  )
-)
-
-contrast_summary <- rbind(
-  deseq_summary,
-  edger_summary,
-  fill = TRUE
-)
-contrast_summary <- merge(
-  contrast_summary,
-  contrast_definitions[, .(
-    contrast,
-    subset,
-    effect,
-    role
-  )],
-  by = "contrast",
-  all.x = TRUE
-)
-setorder(
-  contrast_summary,
-  subset,
-  effect,
-  method
-)
-fwrite(
-  contrast_summary,
-  file.path(
-    DIRS$tables,
-    "10_contrast_result_summary.csv"
-  )
-)
-
-############################################################
-## 12. DESeq2-edgeR method concordance
-############################################################
-
-method_comparison_list <- list()
-method_summary_list <- list()
-
-for (contrast_name in contrast_definitions$contrast) {
-  d <- deseq_all[
-    contrast == contrast_name,
-    .(
-      gene_id,
-      deseq_log2fc = log2fc_shrunk,
-      deseq_pvalue = pvalue,
-      deseq_padj = padj
-    )
-  ]
-  e <- edger_all[
-    contrast == contrast_name,
-    .(
-      gene_id,
-      edger_log2fc = log2fc,
-      edger_pvalue = pvalue,
-      edger_padj = padj
-    )
-  ]
-
-  m <- merge(
-    d,
-    e,
-    by = "gene_id",
-    all = FALSE
-  )
-  m[, contrast := contrast_name]
-  m[, sign_agreement := (
-    sign(deseq_log2fc) ==
-      sign(edger_log2fc)
-  )]
-  m[, both_fdr_010 := (
-    !is.na(deseq_padj) &
-      deseq_padj <= EXPLORATORY_FDR &
-      !is.na(edger_padj) &
-      edger_padj <= EXPLORATORY_FDR
-  )]
-  method_comparison_list[[contrast_name]] <- m
-
-  complete <- m[
-    is.finite(deseq_log2fc) &
-      is.finite(edger_log2fc)
-  ]
-  top_d <- head(
-    complete[
-      order(
-        deseq_padj,
-        -abs(deseq_log2fc),
-        na.last = TRUE
-      ),
-      gene_id
-    ],
-    200L
-  )
-  top_e <- head(
-    complete[
-      order(
-        edger_padj,
-        -abs(edger_log2fc),
-        na.last = TRUE
-      ),
-      gene_id
-    ],
-    200L
-  )
-
-  method_summary_list[[contrast_name]] <- data.table(
-    contrast = contrast_name,
-    common_tested_genes = nrow(complete),
-    pearson_lfc = suppressWarnings(
-      cor(
-        complete$deseq_log2fc,
-        complete$edger_log2fc,
-        method = "pearson"
-      )
-    ),
-    spearman_lfc = suppressWarnings(
-      cor(
-        complete$deseq_log2fc,
-        complete$edger_log2fc,
-        method = "spearman"
-      )
-    ),
-    overall_sign_agreement = mean(
-      complete$sign_agreement,
-      na.rm = TRUE
-    ),
-    sign_agreement_among_any_fdr_010 = mean(
-      complete[
-        (
-          deseq_padj <= EXPLORATORY_FDR |
-            edger_padj <= EXPLORATORY_FDR
-        ),
-        sign_agreement
-      ],
-      na.rm = TRUE
-    ),
-    top200_jaccard = length(
-      intersect(top_d, top_e)
-    ) /
-      length(
-        union(top_d, top_e)
-      )
-  )
-}
-
-method_comparison <- rbindlist(
-  method_comparison_list,
-  use.names = TRUE,
-  fill = TRUE
-)
-method_summary <- rbindlist(
-  method_summary_list,
-  use.names = TRUE,
-  fill = TRUE
-)
-fwrite(
-  method_comparison,
-  file.path(
-    DIRS$tables,
-    "11_DESeq2_edgeR_gene_level_comparison.csv.gz"
-  ),
-  compress = "gzip"
-)
-fwrite(
-  method_summary,
-  file.path(
-    DIRS$tables,
-    "12_DESeq2_edgeR_method_concordance_summary.csv"
-  )
-)
-
-## Method agreement plots for primary disease and drug contrasts.
-primary_contrasts <- contrast_definitions[
-  effect %in% c(
-    "Disease_under_vehicle",
-    "Drug_under_HFD"
-  )
-]
-for (contrast_name in primary_contrasts$contrast) {
-  plot_dt <- method_comparison[
-    contrast == contrast_name
-  ]
-  plot_dt <- merge(
-    plot_dt,
-    gene_annotation[, .(
-      gene_id,
-      display_gene
-    )],
-    by = "gene_id",
-    all.x = TRUE
-  )
-  label_dt <- plot_dt[
-    order(
-      pmin(
-        deseq_padj,
-        edger_padj,
-        na.rm = TRUE
-      ),
-      -abs(deseq_log2fc)
-    )
-  ][seq_len(min(TOP_LABEL_GENES, .N))]
-
-  p_method <- ggplot(
-    plot_dt,
-    aes(
-      x = deseq_log2fc,
-      y = edger_log2fc
-    )
-  ) +
-    geom_hline(yintercept = 0) +
-    geom_vline(xintercept = 0) +
-    geom_point(
-      aes(shape = sign_agreement),
-      alpha = 0.5,
-      size = 1.5
-    ) +
-    geom_text_repel(
-      data = label_dt,
-      aes(label = display_gene),
-      size = 2.7,
-      max.overlaps = Inf
-    ) +
-    labs(
-      x = "DESeq2 shrunken log2FC",
-      y = "edgeR QL log2FC",
-      shape = "Sign agreement",
-      title = paste0(
-        "Method agreement: ",
-        contrast_name
-      )
-    ) +
-    theme_bw(base_size = 10)
-
-  safe_name <- gsub(
-    "[^A-Za-z0-9_]+",
-    "_",
-    contrast_name
-  )
-  ggsave(
-    file.path(
-      DIRS$figures,
-      paste0(
-        "FigS2C_method_agreement_",
-        safe_name,
-        ".png"
-      )
-    ),
-    p_method,
-    width = 7,
-    height = 6,
-    dpi = 300
-  )
-}
-
-############################################################
-## 13. Continuous drug-opposition ranking by macrophage subset
-############################################################
-
-build_opposition_table <- function(subset_name) {
-  disease_name <- contrast_definitions[
-    subset == subset_name &
-      effect == "Disease_under_vehicle",
-    contrast
-  ]
-  drug_name <- contrast_definitions[
-    subset == subset_name &
-      effect == "Drug_under_HFD",
-    contrast
-  ]
-
-  disease_d <- deseq_all[
-    contrast == disease_name,
-    .(
-      gene_id,
-      disease_base_mean = base_mean,
-      disease_lfc = log2fc_shrunk,
-      disease_lfc_raw = log2fc_raw,
-      disease_pvalue = pvalue,
-      disease_padj = padj,
-      disease_stat = stat
-    )
-  ]
-  drug_d <- deseq_all[
-    contrast == drug_name,
-    .(
-      gene_id,
-      drug_base_mean = base_mean,
-      drug_lfc = log2fc_shrunk,
-      drug_lfc_raw = log2fc_raw,
-      drug_pvalue = pvalue,
-      drug_padj = padj,
-      drug_stat = stat
-    )
-  ]
-
-  disease_e <- edger_all[
-    contrast == disease_name,
-    .(
-      gene_id,
-      disease_edger_lfc = log2fc,
-      disease_edger_pvalue = pvalue,
-      disease_edger_padj = padj
-    )
-  ]
-  drug_e <- edger_all[
-    contrast == drug_name,
-    .(
-      gene_id,
-      drug_edger_lfc = log2fc,
-      drug_edger_pvalue = pvalue,
-      drug_edger_padj = padj
-    )
-  ]
-
-  out <- Reduce(
-    function(x, y) merge(
-      x,
-      y,
-      by = "gene_id",
-      all = FALSE
-    ),
-    list(
-      disease_d,
-      drug_d,
-      disease_e,
-      drug_e
-    )
-  )
-  out <- merge(
-    out,
-    gene_annotation,
-    by = "gene_id",
-    all.x = TRUE
-  )
-
-  out[, subset := subset_name]
-  out[, deseq_opposed := (
-    is.finite(disease_lfc) &
-      is.finite(drug_lfc) &
-      disease_lfc * drug_lfc < 0
-  )]
-  out[, edger_opposed := (
-    is.finite(disease_edger_lfc) &
-      is.finite(drug_edger_lfc) &
-      disease_edger_lfc *
-        drug_edger_lfc < 0
-  )]
-  out[, disease_method_sign_agreement := (
-    sign(disease_lfc) ==
-      sign(disease_edger_lfc)
-  )]
-  out[, drug_method_sign_agreement := (
-    sign(drug_lfc) ==
-      sign(drug_edger_lfc)
-  )]
-  out[, four_effect_signs_consistent := (
-    disease_method_sign_agreement &
-      drug_method_sign_agreement
-  )]
-
-  ## Positive values indicate opposition; negative values indicate
-  ## disease and drug effects in the same direction.
-  out[, opposition_effect_score := (
-    -sign(disease_lfc * drug_lfc) *
-      sqrt(
-        abs(disease_lfc * drug_lfc)
-      )
-  )]
-
-  out[, disease_abs_lfc_rank := safe_rank(
-    abs(disease_lfc),
-    decreasing = TRUE
-  )]
-  out[, drug_abs_lfc_rank := safe_rank(
-    abs(drug_lfc),
-    decreasing = TRUE
-  )]
-  out[, rank_product_effect := sqrt(
-    disease_abs_lfc_rank *
-      drug_abs_lfc_rank
-  )]
-
-  out[, disease_evidence_rank := safe_rank(
-    safe_neglog10(disease_padj),
-    decreasing = TRUE
-  )]
-  out[, drug_evidence_rank := safe_rank(
-    safe_neglog10(drug_padj),
-    decreasing = TRUE
-  )]
-  out[, rank_product_statistical := sqrt(
-    disease_evidence_rank *
-      drug_evidence_rank
-  )]
-
-  out[, combined_rank_product := (
-    rank_product_effect *
-      rank_product_statistical
-  )^(1 / 2)]
-
-  out[, opposition_tier := fcase(
-    deseq_opposed &
-      edger_opposed &
-      four_effect_signs_consistent &
-      disease_padj <= EXPLORATORY_FDR &
-      drug_padj <= EXPLORATORY_FDR,
-    "Tier_A_both_DESeq2_FDR_and_edgeR_direction",
-
-    deseq_opposed &
-      edger_opposed &
-      four_effect_signs_consistent &
-      (
-        disease_padj <= EXPLORATORY_FDR |
-          drug_padj <= EXPLORATORY_FDR
-      ) &
-      abs(disease_lfc) >= MIN_ABS_LFC_FOR_TIER &
-      abs(drug_lfc) >= MIN_ABS_LFC_FOR_TIER,
-    "Tier_B_one_DESeq2_FDR_effect_supported",
-
-    deseq_opposed &
-      edger_opposed &
-      four_effect_signs_consistent &
-      abs(disease_lfc) >= MIN_ABS_LFC_FOR_TIER &
-      abs(drug_lfc) >= MIN_ABS_LFC_FOR_TIER,
-    "Tier_C_effect_and_method_supported",
-
-    deseq_opposed,
-    "Tier_D_directional_opposition_only",
-
-    default = "Not_opposed"
-  )]
-
-  tier_order <- c(
-    "Tier_A_both_DESeq2_FDR_and_edgeR_direction",
-    "Tier_B_one_DESeq2_FDR_effect_supported",
-    "Tier_C_effect_and_method_supported",
-    "Tier_D_directional_opposition_only",
-    "Not_opposed"
-  )
-  out[, tier_order := match(
-    opposition_tier,
-    tier_order
-  )]
-  setorder(
-    out,
-    tier_order,
-    combined_rank_product,
-    -opposition_effect_score,
-    gene_id
-  )
-  out[, within_subset_rank := seq_len(.N)]
-  out[, tier_order := NULL]
-  out
-}
-
-opposition_positive <- build_opposition_table(
-  "Ccr2_positive"
-)
-opposition_negative <- build_opposition_table(
-  "Ccr2_negative"
-)
-
-fwrite(
-  opposition_positive,
-  file.path(
-    DIRS$tables,
-    "13_opposition_rank_Ccr2_positive.csv.gz"
-  ),
-  compress = "gzip"
-)
-fwrite(
-  opposition_negative,
-  file.path(
-    DIRS$tables,
-    "14_opposition_rank_Ccr2_negative.csv.gz"
-  ),
-  compress = "gzip"
-)
-
-opposition_summary <- rbindlist(list(
-  opposition_positive[, .(
-    subset = "Ccr2_positive",
-    tested_genes = .N,
-    DESeq2_opposed = sum(deseq_opposed),
-    edgeR_opposed = sum(edger_opposed),
-    both_methods_opposed = sum(
-      deseq_opposed &
-        edger_opposed &
-        four_effect_signs_consistent
-    ),
-    tier_A = sum(
-      grepl("^Tier_A", opposition_tier)
-    ),
-    tier_B = sum(
-      grepl("^Tier_B", opposition_tier)
-    ),
-    tier_C = sum(
-      grepl("^Tier_C", opposition_tier)
-    ),
-    tier_D = sum(
-      grepl("^Tier_D", opposition_tier)
-    )
-  )],
-  opposition_negative[, .(
-    subset = "Ccr2_negative",
-    tested_genes = .N,
-    DESeq2_opposed = sum(deseq_opposed),
-    edgeR_opposed = sum(edger_opposed),
-    both_methods_opposed = sum(
-      deseq_opposed &
-        edger_opposed &
-        four_effect_signs_consistent
-    ),
-    tier_A = sum(
-      grepl("^Tier_A", opposition_tier)
-    ),
-    tier_B = sum(
-      grepl("^Tier_B", opposition_tier)
-    ),
-    tier_C = sum(
-      grepl("^Tier_C", opposition_tier)
-    ),
-    tier_D = sum(
-      grepl("^Tier_D", opposition_tier)
-    )
-  )]
-))
-fwrite(
-  opposition_summary,
-  file.path(
-    DIRS$tables,
-    "15_opposition_summary.csv"
-  )
-)
-
-############################################################
-## 14. Cross-subset consensus ranking
-############################################################
-
-pos_for_merge <- opposition_positive[, .(
-  gene_id,
-  symbol,
-  display_gene,
-  pos_disease_lfc = disease_lfc,
-  pos_drug_lfc = drug_lfc,
-  pos_disease_padj = disease_padj,
-  pos_drug_padj = drug_padj,
-  pos_deseq_opposed = deseq_opposed,
-  pos_edger_opposed = edger_opposed,
-  pos_method_sign_consistent = four_effect_signs_consistent,
-  pos_opposition_score = opposition_effect_score,
-  pos_tier = opposition_tier,
-  pos_rank = within_subset_rank
-)]
-neg_for_merge <- opposition_negative[, .(
-  gene_id,
-  neg_disease_lfc = disease_lfc,
-  neg_drug_lfc = drug_lfc,
-  neg_disease_padj = disease_padj,
-  neg_drug_padj = drug_padj,
-  neg_deseq_opposed = deseq_opposed,
-  neg_edger_opposed = edger_opposed,
-  neg_method_sign_consistent = four_effect_signs_consistent,
-  neg_opposition_score = opposition_effect_score,
-  neg_tier = opposition_tier,
-  neg_rank = within_subset_rank
-)]
-
-cross_subset <- merge(
-  pos_for_merge,
-  neg_for_merge,
-  by = "gene_id",
-  all = TRUE
-)
-cross_subset[, opposed_in_both_subsets := (
-  pos_deseq_opposed &
-    neg_deseq_opposed
-)]
-cross_subset[, disease_direction_concordant := (
-  sign(pos_disease_lfc) ==
-    sign(neg_disease_lfc)
-)]
-cross_subset[, drug_direction_concordant := (
-  sign(pos_drug_lfc) ==
-    sign(neg_drug_lfc)
-)]
-cross_subset[, both_methods_and_subsets_supported := (
-  pos_deseq_opposed &
-    neg_deseq_opposed &
-    pos_edger_opposed &
-    neg_edger_opposed &
-    pos_method_sign_consistent &
-    neg_method_sign_consistent
-)]
-cross_subset[, consensus_rank_product := sqrt(
-  pos_rank * neg_rank
-)]
-cross_subset[, mean_opposition_score := rowMeans(
-  cbind(
-    pos_opposition_score,
-    neg_opposition_score
-  ),
-  na.rm = TRUE
-)]
-cross_subset[, consensus_category := fcase(
-  both_methods_and_subsets_supported &
-    disease_direction_concordant &
-    drug_direction_concordant,
-  "Cross_subset_full_directional_consensus",
-
-  opposed_in_both_subsets,
-  "Opposed_in_both_subsets",
-
-  pos_deseq_opposed |
-    neg_deseq_opposed,
-  "Subset_specific_opposition",
-
-  default = "Not_opposed"
-)]
-category_order <- c(
-  "Cross_subset_full_directional_consensus",
-  "Opposed_in_both_subsets",
-  "Subset_specific_opposition",
-  "Not_opposed"
-)
-cross_subset[, category_order := match(
-  consensus_category,
-  category_order
-)]
-setorder(
-  cross_subset,
-  category_order,
-  consensus_rank_product,
-  -mean_opposition_score,
-  gene_id
-)
-cross_subset[, overall_consensus_rank := seq_len(.N)]
-cross_subset[, category_order := NULL]
-
-fwrite(
-  cross_subset,
-  file.path(
-    DIRS$tables,
-    "16_cross_subset_consensus_ranking.csv.gz"
-  ),
-  compress = "gzip"
-)
-
-############################################################
-## 15. Factorial LRT sensitivity analyses
-############################################################
-
-factorial_coldata <- as.data.frame(
-  sample_meta[, .(
-    sample_accession,
-    subset = macrophage_subset,
-    diet,
-    drug = drug_factor
-  )]
-)
-rownames(factorial_coldata) <- (
-  factorial_coldata$sample_accession
-)
-factorial_coldata <- factorial_coldata[
-  colnames(count_matrix_filtered),
-  ,
-  drop = FALSE
-]
-
-## Global evidence for any drug-associated term.
-dds_lrt_drug <- DESeqDataSetFromMatrix(
-  countData = count_matrix_filtered,
-  colData = factorial_coldata,
-  design = ~ subset * diet * drug
-)
-dds_lrt_drug <- DESeq(
-  dds_lrt_drug,
-  test = "LRT",
-  reduced = ~ subset * diet,
-  minReplicatesForReplace = Inf,
-  quiet = TRUE
-)
-lrt_drug_res <- results(dds_lrt_drug)
-lrt_drug <- data.table(
-  gene_id = rownames(lrt_drug_res),
-  base_mean = lrt_drug_res$baseMean,
-  log2fc_display_coefficient = lrt_drug_res$log2FoldChange,
-  stat = lrt_drug_res$stat,
-  pvalue = lrt_drug_res$pvalue,
-  padj = lrt_drug_res$padj,
-  test = "LRT_any_drug_related_term",
-  full_model = "subset*diet*drug",
-  reduced_model = "subset*diet"
-)
-lrt_drug <- merge(
-  lrt_drug,
-  gene_annotation,
-  by = "gene_id",
-  all.x = TRUE
-)
-
-## Heterogeneity of drug-diet interaction across macrophage subsets.
-dds_lrt_threeway <- DESeqDataSetFromMatrix(
-  countData = count_matrix_filtered,
-  colData = factorial_coldata,
-  design = ~ subset * diet * drug
-)
-dds_lrt_threeway <- DESeq(
-  dds_lrt_threeway,
-  test = "LRT",
-  reduced = ~ subset * diet +
-    subset * drug +
-    diet * drug,
-  minReplicatesForReplace = Inf,
-  quiet = TRUE
-)
-lrt_threeway_res <- results(dds_lrt_threeway)
-lrt_threeway <- data.table(
-  gene_id = rownames(lrt_threeway_res),
-  base_mean = lrt_threeway_res$baseMean,
-  log2fc_display_coefficient = lrt_threeway_res$log2FoldChange,
-  stat = lrt_threeway_res$stat,
-  pvalue = lrt_threeway_res$pvalue,
-  padj = lrt_threeway_res$padj,
-  test = "LRT_three_way_interaction",
-  full_model = "subset*diet*drug",
-  reduced_model = "subset*diet + subset*drug + diet*drug"
-)
-lrt_threeway <- merge(
-  lrt_threeway,
-  gene_annotation,
-  by = "gene_id",
-  all.x = TRUE
-)
-
-fwrite(
-  lrt_drug,
-  file.path(
-    DIRS$tables,
-    "17_factorial_LRT_any_drug_term.csv.gz"
-  ),
-  compress = "gzip"
-)
-fwrite(
-  lrt_threeway,
-  file.path(
-    DIRS$tables,
-    "18_factorial_LRT_three_way_interaction.csv.gz"
-  ),
-  compress = "gzip"
-)
-saveRDS(
-  dds_lrt_drug,
-  file.path(
-    DIRS$objects,
-    "GSE237156_factorial_LRT_drug_dds.rds"
-  )
-)
-saveRDS(
-  dds_lrt_threeway,
-  file.path(
-    DIRS$objects,
-    "GSE237156_factorial_LRT_threeway_dds.rds"
-  )
-)
-
-############################################################
-## 16. Optional mouse-native Hallmark GSEA and pathway opposition
-############################################################
-
-gsea_all <- data.table()
-pathway_opposition <- data.table()
-gsea_status <- "NOT_REQUESTED"
-gsea_database_mode <- "NOT_RUN"
-gsea_section_error <- NULL
-
-if (RUN_OPTIONAL_GSEA) {
-  tryCatch({
-    if (
-      requireNamespace("fgsea", quietly = TRUE) &&
-      requireNamespace("msigdbr", quietly = TRUE)
-    ) {
-      log_msg("Running optional mouse-native Hallmark GSEA.")
-      gsea_status <- "RUNNING"
-
-      msig_formals <- names(
-        formals(msigdbr::msigdbr)
-      )
-
-      ## Prefer the native mouse MSigDB division and MH Hallmark collection.
-      ## Fall back to human Hallmark ortholog mapping only for older msigdbr
-      ## releases that do not expose db_species.
-      if (
-        "db_species" %in% msig_formals &&
-        "collection" %in% msig_formals
-      ) {
-        hallmark <- msigdbr::msigdbr(
-          db_species = "MM",
-          species = "Mus musculus",
-          collection = "MH"
-        )
-        gsea_database_mode <- "Mouse_MSigDB_MM_MH"
-      } else if (
-        "db_species" %in% msig_formals &&
-        "category" %in% msig_formals
-      ) {
-        hallmark <- msigdbr::msigdbr(
-          db_species = "MM",
-          species = "Mus musculus",
-          category = "MH"
-        )
-        gsea_database_mode <- "Mouse_MSigDB_MM_MH_legacy_category"
-      } else if ("collection" %in% msig_formals) {
-        hallmark <- msigdbr::msigdbr(
-          species = "Mus musculus",
-          collection = "H"
-        )
-        gsea_database_mode <- "Human_Hallmark_mouse_ortholog_fallback"
-      } else {
-        hallmark <- msigdbr::msigdbr(
-          species = "Mus musculus",
-          category = "H"
-        )
-        gsea_database_mode <- "Human_Hallmark_mouse_ortholog_legacy_fallback"
-      }
-
-      hallmark <- as.data.table(hallmark)
-      symbol_candidates <- c(
-        "gene_symbol",
-        "target_gene",
-        "db_gene_symbol"
-      )
-      symbol_column <- intersect(
-        symbol_candidates,
-        names(hallmark)
-      )[1L]
-
-      if (
-        length(symbol_column) == 0L ||
-        is.na(symbol_column) ||
-        !"gs_name" %in% names(hallmark)
-      ) {
-        stop(
-          "Expected gs_name and mouse gene-symbol columns were not found in msigdbr output."
-        )
-      }
-
-      pathways <- split(
-        hallmark[[symbol_column]],
-        hallmark$gs_name
-      )
-      pathways <- lapply(
-        pathways,
-        function(x) unique(
-          x[
-            !is.na(x) &
-              nzchar(x)
-          ]
-        )
-      )
-      pathways <- pathways[
-        lengths(pathways) >= 15L
-      ]
-
-      if (length(pathways) == 0L) {
-        stop("No eligible Hallmark pathways remained after gene-set filtering.")
-      }
-
-      gsea_records <- list()
-      for (i in seq_len(nrow(primary_contrasts))) {
-        contrast_name <- primary_contrasts$contrast[i]
-
-        rank_dt <- deseq_all[
-          contrast == contrast_name &
-            !is.na(symbol) &
-            nzchar(symbol) &
-            is.finite(stat),
-          .(
-            symbol,
-            stat
-          )
-        ]
-
-        ## FIXED v2: setorder() accepts column names, not expressions such
-        ## as -abs(stat). Create an explicit absolute-statistic column.
-        rank_dt[, abs_stat := abs(stat)]
-        setorder(
-          rank_dt,
-          symbol,
-          -abs_stat
-        )
-        rank_dt <- rank_dt[, .SD[1L], by = symbol]
-
-        ranks <- rank_dt$stat
-        names(ranks) <- rank_dt$symbol
-        ranks <- sort(
-          ranks,
-          decreasing = TRUE
-        )
-
-        if (length(ranks) < 1000L) {
-          add_warning(
-            "GSEA",
-            contrast_name,
-            paste0(
-              "Only ",
-              length(ranks),
-              " unique ranked symbols were available; contrast skipped."
-            )
-          )
-          next
-        }
-
-        fg <- tryCatch(
-          fgsea::fgseaMultilevel(
-            pathways = pathways,
-            stats = ranks,
-            minSize = 15,
-            maxSize = 500,
-            eps = 0
-          ),
-          error = function(e) {
-            add_warning(
-              "GSEA_CONTRAST",
-              contrast_name,
-              conditionMessage(e)
-            )
-            NULL
-          }
-        )
-
-        if (!is.null(fg) && nrow(fg) > 0L) {
-          fg <- as.data.table(fg)
-          fg[, leadingEdge := vapply(
-            leadingEdge,
-            paste,
-            collapse = ";",
-            character(1)
-          )]
-          fg[, contrast := contrast_name]
-          fg[, subset := primary_contrasts[
-            contrast == contrast_name,
-            subset
-          ]]
-          fg[, effect := primary_contrasts[
-            contrast == contrast_name,
-            effect
-          ]]
-          fg[, gene_set_database_mode := gsea_database_mode]
-          gsea_records[[contrast_name]] <- fg
-        }
-      }
-
-      if (length(gsea_records) > 0L) {
-        gsea_all <- rbindlist(
-          gsea_records,
-          use.names = TRUE,
-          fill = TRUE
-        )
-        fwrite(
-          gsea_all,
-          file.path(
-            DIRS$tables,
-            "19_Hallmark_GSEA_primary_contrasts.csv"
-          )
-        )
-
-        pathway_list <- list()
-        for (subset_name in unique(
-          primary_contrasts$subset
-        )) {
-          disease_contrast <- primary_contrasts[
-            subset == subset_name &
-              effect == "Disease_under_vehicle",
-            contrast
-          ]
-          drug_contrast <- primary_contrasts[
-            subset == subset_name &
-              effect == "Drug_under_HFD",
-            contrast
-          ]
-
-          gd <- gsea_all[
-            contrast == disease_contrast,
-            .(
-              pathway,
-              disease_NES = NES,
-              disease_padj = padj
-            )
-          ]
-          gt <- gsea_all[
-            contrast == drug_contrast,
-            .(
-              pathway,
-              drug_NES = NES,
-              drug_padj = padj
-            )
-          ]
-
-          gp <- merge(
-            gd,
-            gt,
-            by = "pathway",
-            all = FALSE
-          )
-          gp[, subset := subset_name]
-          gp[, pathway_opposed := (
-            disease_NES * drug_NES < 0
-          )]
-          gp[, pathway_opposition_strength := (
-            -sign(disease_NES * drug_NES) *
-              sqrt(
-                abs(disease_NES * drug_NES)
-              )
-          )]
-          setorder(
-            gp,
-            -pathway_opposed,
-            -pathway_opposition_strength,
-            disease_padj,
-            drug_padj
-          )
-          pathway_list[[subset_name]] <- gp
-        }
-
-        pathway_opposition <- rbindlist(
-          pathway_list,
-          use.names = TRUE,
-          fill = TRUE
-        )
-        fwrite(
-          pathway_opposition,
-          file.path(
-            DIRS$tables,
-            "20_Hallmark_pathway_opposition.csv"
-          )
-        )
-        gsea_status <- "COMPLETED"
-      } else {
-        gsea_status <- "NO_GSEA_RESULTS"
-      }
-    } else {
-      gsea_status <- "OPTIONAL_PACKAGES_UNAVAILABLE"
-      add_warning(
-        "GSEA",
-        "packages",
-        "fgsea and/or msigdbr unavailable; optional GSEA was skipped."
-      )
-    }
-  }, error = function(e) {
-    gsea_section_error <<- conditionMessage(e)
-  })
-
-  ## GSEA is optional and must never terminate the core Stage 2 analysis.
-  if (!is.null(gsea_section_error)) {
-    gsea_status <- "FAILED_NONFATAL"
-    add_warning(
-      "GSEA_SECTION",
-      "optional_mouse_hallmark",
-      paste0(
-        gsea_section_error,
-        " Core DESeq2, edgeR, opposition ranking, and factorial analyses remain valid."
-      )
-    )
-  }
-}
-
-############################################################
-## 17. Core drug-opposition figures
-############################################################
-
-plot_opposition_scatter <- function(
-  opposition_dt,
-  subset_name,
-  figure_stem
-) {
-  plot_dt <- copy(opposition_dt)
-  label_dt <- plot_dt[
-    deseq_opposed == TRUE
-  ][
-    order(
-      combined_rank_product,
-      -opposition_effect_score
-    )
-  ][
-    seq_len(min(TOP_LABEL_GENES, .N))
-  ]
-
-  fwrite(
-    plot_dt[, .(
-      gene_id,
-      display_gene,
-      disease_lfc,
-      drug_lfc,
-      disease_padj,
-      drug_padj,
-      deseq_opposed,
-      edger_opposed,
-      opposition_tier,
-      opposition_effect_score,
-      combined_rank_product
-    )],
-    file.path(
-      DIRS$source,
-      paste0(
-        figure_stem,
-        "_source.csv"
-      )
-    )
-  )
-
-  p <- ggplot(
-    plot_dt,
-    aes(
-      x = disease_lfc,
-      y = drug_lfc
-    )
-  ) +
-    geom_hline(yintercept = 0) +
-    geom_vline(xintercept = 0) +
-    geom_point(
-      aes(shape = deseq_opposed),
-      alpha = 0.55,
-      size = 1.6
-    ) +
-    geom_text_repel(
-      data = label_dt,
-      aes(label = display_gene),
-      size = 2.8,
-      max.overlaps = Inf
-    ) +
-    labs(
-      x = "Disease effect: HFD vehicle vs CD vehicle\nDESeq2 shrunken log2FC",
-      y = "Drug effect: HFD dapagliflozin vs HFD vehicle\nDESeq2 shrunken log2FC",
-      shape = "Opposed direction",
-      title = paste0(
-        subset_name,
-        ": disease–drug directional relationship"
-      ),
-      subtitle = "Upper-left and lower-right quadrants indicate transcriptional opposition"
-    ) +
-    theme_bw(base_size = 10)
-
-  ggsave(
-    file.path(
-      DIRS$figures,
-      paste0(figure_stem, ".png")
-    ),
-    p,
-    width = 8,
-    height = 7,
-    dpi = 300
-  )
-  ggsave(
-    file.path(
-      DIRS$figures,
-      paste0(figure_stem, ".pdf")
-    ),
-    p,
-    width = 8,
-    height = 7
-  )
-}
-
-plot_opposition_scatter(
-  opposition_positive,
-  "Ccr2-positive macrophages",
-  "Fig2B_Ccr2_positive_disease_drug_opposition"
-)
-plot_opposition_scatter(
-  opposition_negative,
-  "Ccr2-negative macrophages",
-  "Fig2C_Ccr2_negative_disease_drug_opposition"
-)
-
-## Heatmap of top consensus/opposed genes.
-heatmap_candidates <- unique(c(
-  cross_subset[
-    consensus_category ==
-      "Cross_subset_full_directional_consensus",
-    gene_id
-  ],
-  opposition_positive[
-    deseq_opposed == TRUE,
-    gene_id
-  ],
-  opposition_negative[
-    deseq_opposed == TRUE,
-    gene_id
-  ]
-))
-rank_lookup <- cross_subset[
-  gene_id %in% heatmap_candidates
-]
-setorder(
-  rank_lookup,
-  overall_consensus_rank
-)
-heatmap_genes <- head(
-  rank_lookup$gene_id,
-  TOP_HEATMAP_GENES
-)
-heatmap_genes <- heatmap_genes[
-  heatmap_genes %in% rownames(vst_matrix)
-]
-
-if (length(heatmap_genes) >= 2L) {
-  heat_mat <- vst_matrix[
-    heatmap_genes,
-    ,
-    drop = FALSE
-  ]
-  heat_z <- t(scale(t(heat_mat)))
-  heat_z[!is.finite(heat_z)] <- 0
-
-  label_map <- gene_annotation[
-    match(
-      rownames(heat_z),
-      gene_id
-    ),
-    display_gene
-  ]
-  label_map[
-    is.na(label_map) |
-      !nzchar(label_map)
-  ] <- rownames(heat_z)[
-    is.na(label_map) |
-      !nzchar(label_map)
-  ]
-  rownames(heat_z) <- make.unique(label_map)
-
-  heat_annotation <- data.frame(
-    subset = coldata$macrophage_subset,
-    diet = coldata$diet,
-    drug = coldata$drug
-  )
-  rownames(heat_annotation) <- rownames(coldata)
-
-  heat_source <- as.data.table(
-    heat_z,
-    keep.rownames = "display_gene"
-  )
-  fwrite(
-    heat_source,
-    file.path(
-      DIRS$source,
-      "Fig2D_top_opposed_heatmap_source.csv"
-    )
-  )
-
-  png(
-    file.path(
-      DIRS$figures,
-      "Fig2D_top_drug_opposed_genes_heatmap.png"
-    ),
-    width = 3000,
-    height = 3300,
-    res = 300
-  )
-  pheatmap(
-    heat_z,
-    annotation_col = heat_annotation,
-    show_colnames = FALSE,
-    border_color = NA,
-    cluster_cols = TRUE,
-    cluster_rows = TRUE,
-    main = "Top cross-subset and subset-specific drug-opposed genes"
-  )
-  dev.off()
-
-  pdf(
-    file.path(
-      DIRS$figures,
-      "Fig2D_top_drug_opposed_genes_heatmap.pdf"
-    ),
-    width = 10,
-    height = 12
-  )
-  pheatmap(
-    heat_z,
-    annotation_col = heat_annotation,
-    show_colnames = FALSE,
-    border_color = NA,
-    cluster_cols = TRUE,
-    cluster_rows = TRUE,
-    main = "Top cross-subset and subset-specific drug-opposed genes"
-  )
-  dev.off()
-} else {
-  add_warning(
-    "FIGURE",
-    "opposition_heatmap",
-    "Fewer than two eligible genes were available; heatmap was skipped."
-  )
-}
-
-############################################################
-## 18. Compact workbook and parameter documentation
+## 18. Workbook, methods, and parameter documentation
 ############################################################
 
 workbook_path <- file.path(
   DIRS$tables,
-  "21_GSE237156_stage2_key_results.xlsx"
+  "36_GSE236585_stage3_key_results.xlsx"
 )
 wb <- createWorkbook()
+
 write_sheet_safe(
   wb,
   "Sample_metadata",
@@ -3234,63 +5780,90 @@ write_sheet_safe(
 )
 write_sheet_safe(
   wb,
-  "Sample_file_mapping",
-  sample_file_map
+  "Checkpoint_audit",
+  checkpoint_audit
 )
 write_sheet_safe(
   wb,
-  "Sample_QC",
-  sample_qc
+  "Checkpoint_validation",
+  qc_validation
 )
 write_sheet_safe(
   wb,
-  "Contrast_definitions",
-  contrast_definitions
+  "10x_mapping_inherited",
+  file_map
 )
 write_sheet_safe(
   wb,
-  "Contrast_summary",
-  contrast_summary
+  "QC_thresholds",
+  qc_thresholds
 )
 write_sheet_safe(
   wb,
-  "Method_concordance",
-  method_summary
+  "QC_summary_inherited",
+  qc_summary
 )
 write_sheet_safe(
   wb,
-  "Opposition_summary",
-  opposition_summary
+  "Doublet_rates",
+  doublet_rates
 )
 write_sheet_safe(
   wb,
-  "Top_Ccr2_positive",
-  head(
-    opposition_positive,
-    1000L
-  )
+  "Cluster_annotation",
+  cluster_annotation
 )
 write_sheet_safe(
   wb,
-  "Top_Ccr2_negative",
-  head(
-    opposition_negative,
-    1000L
-  )
+  "Celltype_composition",
+  composition_complete
 )
 write_sheet_safe(
   wb,
-  "Cross_subset_top",
-  head(
-    cross_subset,
-    1000L
-  )
+  "Composition_stats",
+  composition_stats
 )
 write_sheet_safe(
   wb,
-  "Pathway_opposition",
-  pathway_opposition
+  "Signature_sizes",
+  signature_size_summary
 )
+write_sheet_safe(
+  wb,
+  "Signature_coverage",
+  signature_coverage
+)
+write_sheet_safe(
+  wb,
+  "Program_stats",
+  pseudobulk_program_stats
+)
+write_sheet_safe(
+  wb,
+  "PB_eligibility",
+  pseudobulk_eligibility
+)
+write_sheet_safe(
+  wb,
+  "PB_DE_summary",
+  pseudobulk_summary
+)
+write_sheet_safe(
+  wb,
+  "Stage2_Stage3_concordance",
+  stage2_stage3_concordance
+)
+write_sheet_safe(
+  wb,
+  "Macrophage_annotation",
+  macrophage_cluster_annotation
+)
+write_sheet_safe(
+  wb,
+  "Macrophage_score_stats",
+  macrophage_state_score_stats
+)
+
 saveWorkbook(
   wb,
   workbook_path,
@@ -3300,121 +5873,148 @@ saveWorkbook(
 parameter_table <- data.table(
   parameter = c(
     "Random seed",
-    "Minimum count",
-    "Minimum samples meeting minimum count",
-    "DESeq2 alpha",
-    "Formal FDR",
-    "Exploratory FDR",
-    "Tier minimum absolute log2FC",
-    "DESeq2 design",
-    "edgeR design",
-    "Factorial full model",
-    "Factorial reduced model for any drug term",
-    "Factorial reduced model for three-way interaction",
-    "Primary analysis unit",
-    "Candidate preselection",
-    "DESeq2 LFC shrinkage",
-    "Optional GSEA status",
-    "GSEA database mode",
-    "Previous Stage 2 replacement"
+    "Minimum features per cell",
+    "Maximum features hard ceiling",
+    "Maximum counts hard ceiling",
+    "Maximum mitochondrial percentage hard ceiling",
+    "Adaptive QC multiplier",
+    "Adaptive QC upper quantile",
+    "Doublet method",
+    "Repair source checkpoint",
+    "Variable features",
+    "PCA dimensions",
+    "Major clustering resolution",
+    "Macrophage clustering resolution",
+    "Minimum cells per sample-cell type",
+    "Minimum samples per condition",
+    "Pseudobulk primary method",
+    "Pseudobulk sensitivity method",
+    "Signature tiers",
+    "Signature sizes",
+    "Primary signature size",
+    "Inferential unit"
   ),
   value = c(
     "20260714",
-    as.character(MIN_COUNT),
-    as.character(MIN_SAMPLES_WITH_MIN_COUNT),
-    as.character(DESEQ_ALPHA),
-    as.character(FORMAL_FDR),
-    as.character(EXPLORATORY_FDR),
-    as.character(MIN_ABS_LFC_FOR_TIER),
-    "~ group",
-    "~ 0 + group",
-    "~ subset * diet * drug",
-    "~ subset * diet",
-    "~ subset*diet + subset*drug + diet*drug",
-    "Biological sample",
-    "None; all retained genes ranked",
-    "DESeq2 normal prior; unshrunken only as explicit fallback",
-    gsea_status,
-    gsea_database_mode,
-    as.character(REPLACE_PREVIOUS_STAGE2)
+    as.character(MIN_FEATURES_HARD),
+    as.character(MAX_FEATURES_HARD),
+    as.character(MAX_COUNTS_HARD),
+    as.character(MAX_PERCENT_MT_HARD),
+    as.character(QC_MAD_MULTIPLIER),
+    as.character(QC_UPPER_QUANTILE),
+    paste0(
+      doublet_status,
+      "; per-sample scDblFinder; dbr.per1k=",
+      SCDOUBLETFINDER_DBR_PER_1K
+    ),
+    normalizePath(
+      SOURCE_CHECKPOINT,
+      winslash = "/",
+      mustWork = TRUE
+    ),
+    as.character(N_VARIABLE_FEATURES),
+    paste(dims_use, collapse = ","),
+    as.character(MAJOR_CLUSTER_RESOLUTION),
+    as.character(MACROPHAGE_CLUSTER_RESOLUTION),
+    as.character(MIN_CELLS_PER_SAMPLE_CELLTYPE),
+    as.character(MIN_SAMPLES_PER_CONDITION),
+    "edgeR quasi-likelihood pseudobulk",
+    "limma-voom pseudobulk",
+    paste(SIGNATURE_TIERS, collapse = "; "),
+    paste(SIGNATURE_SIZES, collapse = ", "),
+    as.character(PRIMARY_SIGNATURE_SIZE),
+    "Biological sample"
   ),
   rationale = c(
     "Reproducibility",
-    "Remove extremely sparse genes",
-    "Retain genes measurable in at least one experimental cell",
-    "Exploratory small-n reporting threshold",
-    "Conventional formal threshold",
-    "Small-n hypothesis-generating threshold",
-    "Used only for transparent evidence tiers, not hard candidate selection",
-    "Direct estimable pairwise contrasts",
-    "Independent count-based quasi-likelihood sensitivity method",
-    "Tests full 2 x 2 x 2 design",
-    "Global test of drug-associated terms",
-    "Tests subset-specific diet-by-drug heterogeneity",
-    "Avoid pseudoreplication",
-    "Prevents circular prioritization of Nfkb1 or any fixed panel",
-    "Stable shrinkage without requiring optional compiled ashr dependencies",
-    "Optional pathway-level contextualization; nonfatal if unavailable",
-    "Records whether mouse-native MH or an older-version fallback was used",
-    "Deletes the incomplete FIXED_v1 outputs and regenerates a clean FIXED_v2 result set"
+    "Remove low-complexity droplets",
+    "Prevent extreme high-feature cells while retaining cardiac cell diversity",
+    "Prevent extreme high-count cells",
+    "Remove strongly mitochondrial cells",
+    "Sample-specific outlier detection",
+    "Sample-specific outlier detection",
+    "Mandatory per-sample doublet classification; the repair stops if it fails",
+    "Reuses completed v2 post-QC cells and does not repeat raw 10x extraction or original QC",
+    "Major cell-state representation",
+    "Graph construction and UMAP",
+    "Major cardiac cell-type discovery",
+    "Macrophage-state discovery",
+    "Ensure adequate pseudobulk support",
+    "Require all three biological samples per condition",
+    "Primary count-based sample-level inference",
+    "Independent mean-variance modeling sensitivity analysis",
+    "Exclude weak directional-only Tier D genes from projected signatures",
+    "Signature-size sensitivity analysis",
+    "Primary visualization and localization score",
+    "Avoid cell-level pseudoreplication"
   )
 )
 fwrite(
   parameter_table,
   file.path(
     DIRS$methods,
-    "stage2_parameters_and_rationale.csv"
+    "stage3_parameters_and_rationale.csv"
   )
 )
 
 methods_text <- c(
-  "HFpEF Stage 2: GSE237156 drug-opposed macrophage transcriptomic discovery",
+  "HFpEF Stage 3 FIXED v4: checkpoint-based doublet and annotation repair",
   "",
-  "Input:",
-  "- Sixteen RSEM gene-results files reconstructed from GSE237156_RAW.tar.",
-  "- Metadata derived from the Stage 1 locked sample manifest.",
+  "Input and biological design:",
+  "- Six independent ventricular scRNA-seq samples: three HFpEF and three control mice.",
+  "- Sample identities and conditions were taken from the locked Stage 1 manifest.",
+  "- The repair loaded the completed v2 post-QC/pre-doublet Seurat checkpoint.",
+  "- Raw 10x matrices were not re-read and original per-sample QC was not repeated.",
+  "- Checkpoint sample-level cell counts were required to match the completed v2 QC summary.",
   "",
-  "Experimental design:",
-  "- Ccr2-positive versus Ccr2-negative sorted cardiac macrophages.",
-  "- Control diet versus high-fat diet.",
-  "- Vehicle versus dapagliflozin.",
-  "- Two biological samples per experimental cell.",
+  "Quality control and doublets:",
+  "- The completed v2 sample-specific QC results were inherited from the validated checkpoint.",
+  "- scDblFinder was then run separately for each biological sample with a fixed random seed.",
+  "- dbr.per1k was set to 0.008 (0.8% per 1,000 captured cells) when supported by the installed scDblFinder version.",
+  "- Predicted doublets were removed before normalization, clustering, annotation, pseudobulk analysis, and program projection.",
+  "- scDblFinder failure is fatal in this repair version.",
   "",
-  "Primary differential-expression method:",
-  "- DESeq2 on rounded RSEM expected counts.",
-  "- Design: group factor containing the eight experimental cells.",
-  "- Log2 fold changes were shrunk with the DESeq2 normal prior; unshrunken estimates were retained only as an explicit fallback.",
+  "Clustering and annotation:",
+  "- LogNormalize, 3,000 variable genes, percent-mitochondrial regression, PCA, graph clustering, and UMAP were repeated using singlets only.",
+  "- Cluster annotation combined prespecified marker-program scores with deterministic top-marker rules.",
+  "- The marker vocabulary explicitly included Schwann/glial, platelet/megakaryocyte, erythroid, cycling, and low-quality mitochondrial classes.",
+  "- Low-quality mitochondrial, cycling-unresolved, and unresolved clusters were excluded from inferential pseudobulk analyses.",
+  "- Annotation evidence, priority-marker hits, cluster QC, sample dominance, confidence, and manual-review flags were retained.",
+  "- Cluster marker tests are descriptive and do not constitute biological replication.",
   "",
-  "Sensitivity method:",
-  "- edgeR quasi-likelihood generalized linear models with robust dispersion estimation.",
-  "- Method agreement is reported by fold-change correlation, sign agreement, and top-rank overlap.",
+  "Stage 2 program projection:",
+  "- Stage 2 Tier A-C genes supported by opposite disease/drug directions and DESeq2-edgeR directional agreement were used.",
+  "- Separate disease-up/drug-down and disease-down/drug-up components were constructed.",
+  "- Top50, Top100, Top150, and Top200 versions were evaluated for Ccr2-positive, Ccr2-negative, and cross-subset programs.",
+  "- The signed disease-like score was mean expression of disease-up genes minus mean expression of disease-down genes.",
+  "- No gene, including Nfkb1, was forced into a signature.",
   "",
-  "Drug-opposition definition:",
-  "- Disease effect: HFD vehicle versus CD vehicle within each Ccr2 subset.",
-  "- Drug effect: HFD dapagliflozin versus HFD vehicle within the same subset.",
-  "- Opposition requires opposite signs of the disease and drug effects.",
-  "- Continuous opposition effect score: -sign(disease LFC x drug LFC) x sqrt(abs(product)).",
-  "- All retained genes are ranked; evidence tiers are descriptive and do not define a fixed candidate list.",
+  "Pseudobulk inference:",
+  "- Raw counts were summed within biological sample and major cell type.",
+  "- Cell types required at least 20 cells in each of all three samples per condition.",
+  "- edgeR quasi-likelihood was the primary differential-expression method.",
+  "- limma-voom was used as an independent sensitivity method.",
+  "- HFpEF versus control was the tested contrast.",
   "",
-  "Factorial sensitivity analyses:",
-  "- Full model: subset x diet x drug.",
-  "- Any drug-related term LRT: reduced model subset x diet.",
-  "- Three-way interaction LRT: reduced model containing all pairwise interactions.",
+  "Sample-level program testing:",
+  "- Pseudobulk logCPM was standardized gene-wise across the six biological samples within each cell type.",
+  "- Program scores and HFpEF-control effect sizes were calculated at the sample level.",
+  "- Wilcoxon P values and Hedges g were reported as exploratory measures because n = 3 per condition.",
+  "",
+  "Macrophage analysis:",
+  "- Cells annotated as macrophage/monocyte were reclustered.",
+  "- Resident, Ccr2/monocyte-like, inflammatory, Spp1/Trem2 remodeling, interferon-responsive, antigen-presentation, and cycling marker programs were compared.",
+  "- State labels are discovery candidates requiring external and experimental validation.",
   "",
   "Claim boundary:",
-  "- With two samples per experimental cell, findings are hypothesis-generating.",
-  "- Transcriptional opposition does not establish direct pharmacologic targeting or causal regulation.",
-  "- No gene, including Nfkb1, was forced into the ranked output.",
-  "",
-  "Replacement behavior:",
-  "- The incomplete FIXED_v1 output directory and CHECK archive are deleted before the clean FIXED_v2 run.",
-  "- Optional Hallmark GSEA uses mouse-native MM/MH resources when supported and cannot abort the core analysis."
+  "- Stage 3 localizes and tests concordance of Stage 2 programs in an independent cardiac dataset.",
+  "- It does not prove dapagliflozin exposure in GSE236585, direct drug targeting, transcription-factor causality, or cell-cell communication."
 )
 writeLines(
   methods_text,
   file.path(
     DIRS$methods,
-    "stage2_methods_and_claim_boundaries.txt"
+    "stage3_methods_and_claim_boundaries.txt"
   ),
   useBytes = TRUE
 )
@@ -3428,10 +6028,12 @@ capture.output(
 )
 
 ############################################################
-## 19. Run status and review package
+## 19. Completion checks and run status
 ############################################################
 
-warnings_dt <- if (length(warning_records) > 0L) {
+warnings_dt <- if (
+  length(warning_records) > 0L
+) {
   rbindlist(
     warning_records,
     use.names = TRUE,
@@ -3449,66 +6051,99 @@ fwrite(
   warnings_dt,
   file.path(
     DIRS$tables,
-    "22_warnings_and_nonfatal_issues.csv"
+    "37_warnings_and_nonfatal_issues.csv"
   )
 )
 
+primary_coverage_check <- signature_coverage[
+  signature_name %in%
+    primary_signature_names
+]
+
 scientific_checks <- data.table(
   check = c(
-    "Locked sample count",
-    "Unique GSM count",
-    "Eight groups",
-    "Two samples per group",
-    "Unique RSEM mapping",
-    "Extracted RSEM files",
-    "Filtered genes >= 5000",
-    "Eight DESeq2 contrasts",
-    "Eight edgeR contrasts",
-    "Two opposition tables",
-    "Cross-subset consensus nonempty",
-    "Factorial drug LRT nonempty",
-    "Factorial three-way LRT nonempty",
-    "Prior incomplete Stage 2 paths removed"
+    "Locked biological samples",
+    "Control samples",
+    "HFpEF samples",
+    "Checkpoint biological samples",
+    "Checkpoint matches completed v2 QC",
+    "Mandatory scDblFinder completed",
+    "Samples with valid doublet calls",
+    "Samples retaining >=100 singlets",
+    "Major cell types annotated",
+    "No missing major-cell-type labels",
+    "Excluded labels absent from eligible pseudobulk set",
+    "Eligible pseudobulk cell types",
+    "Pseudobulk DE results",
+    "Primary signature sets",
+    "Primary signatures with >=10 detected genes in each direction",
+    "Stage2-Stage3 concordance rows",
+    "Macrophage cells",
+    "Macrophage subclustering"
   ),
   observed = c(
     nrow(sample_meta),
-    uniqueN(sample_meta$sample_accession),
-    nrow(group_check),
-    ifelse(all(group_check$N == 2L), 2L, NA_integer_),
-    sum(sample_file_map$mapping_status == "PASS"),
-    sum(sample_file_map$extracted_exists),
-    sum(gene_filter),
-    uniqueN(deseq_all$contrast),
-    uniqueN(edger_all$contrast),
+    sum(sample_meta$condition == "Control"),
+    sum(sample_meta$condition == "HFpEF"),
+    uniqueN(checkpoint_meta$sample_accession),
+    sum(
+      qc_validation$
+        checkpoint_matches_v2_QC
+    ),
     as.integer(
-      nrow(opposition_positive) > 0L
-    ) +
-      as.integer(
-        nrow(opposition_negative) > 0L
-      ),
-    nrow(cross_subset),
-    nrow(lrt_drug),
-    nrow(lrt_threeway),
+      doublet_status ==
+        "COMPLETED_REQUIRED"
+    ),
+    uniqueN(
+      doublet_calls$sample_accession
+    ),
+    sum(
+      post_doublet_counts$
+        retained_singlet_cells >=
+        100L
+    ),
+    uniqueN(cardiac$major_cell_type),
+    sum(
+      is.na(cardiac$major_cell_type) |
+        !nzchar(cardiac$major_cell_type)
+    ),
+    sum(
+      eligible_celltypes %in%
+        EXCLUDED_FROM_PSEUDOBULK
+    ),
+    length(eligible_celltypes),
+    nrow(pseudobulk_results),
+    length(primary_signature_names),
+    sum(
+      primary_coverage_check$
+        detected_up_genes >= 10L &
+        primary_coverage_check$
+          detected_down_genes >= 10L
+    ),
+    nrow(stage2_stage3_concordance),
+    length(macrophage_cells),
     as.integer(
-      all(
-        replacement_records$deletion_succeeded
-      )
+      macrophage_status == "COMPLETED"
     )
   ),
   expected = c(
-    16L,
-    16L,
-    8L,
-    2L,
-    16L,
-    16L,
-    5000L,
-    8L,
-    8L,
-    2L,
+    6L,
+    3L,
+    3L,
+    6L,
+    6L,
     1L,
+    6L,
+    6L,
+    5L,
+    0L,
+    0L,
+    3L,
     1L,
+    3L,
+    3L,
     1L,
+    200L,
     1L
   ),
   comparison = c(
@@ -3518,32 +6153,40 @@ scientific_checks <- data.table(
     "equal",
     "equal",
     "equal",
+    "equal",
+    "equal",
     "at_least",
     "equal",
     "equal",
-    "equal",
     "at_least",
+    "at_least",
+    "equal",
+    "equal",
     "at_least",
     "at_least",
     "equal"
   )
 )
-scientific_checks[, status := fifelse(
-  comparison == "equal" &
-    observed == expected,
-  "PASS",
-  fifelse(
+scientific_checks[
+  ,
+  status := fcase(
+    comparison == "equal" &
+      observed == expected,
+    "PASS",
+
     comparison == "at_least" &
       observed >= expected,
     "PASS",
-    "FAIL"
+
+    default = "FAIL"
   )
-)]
+]
+
 fwrite(
   scientific_checks,
   file.path(
     DIRS$tables,
-    "23_scientific_completion_checks.csv"
+    "38_scientific_completion_checks.csv"
   )
 )
 
@@ -3553,27 +6196,29 @@ if (
   !is.na(SCRIPT_FILE) &&
   file.exists(SCRIPT_FILE)
 ) {
-  script_methods <- file.path(
+  methods_script <- file.path(
     DIRS$methods,
-    "HFpEF_Stage2_GSE237156_Drug_Opposed_Discovery_FIXED_v2_REPLACE.R"
+    "HFpEF_Stage3_GSE236585_scRNA_Projection_FIXED_v4_PATCH.R"
   )
-  script_check <- file.path(
+  check_script <- file.path(
     DIRS$check,
-    "HFpEF_Stage2_GSE237156_Drug_Opposed_Discovery_FIXED_v2_REPLACE.R"
+    "HFpEF_Stage3_GSE236585_scRNA_Projection_FIXED_v4_PATCH.R"
   )
-  copy1 <- file.copy(
+
+  copy_methods <- file.copy(
     SCRIPT_FILE,
-    script_methods,
+    methods_script,
     overwrite = TRUE
   )
-  copy2 <- file.copy(
+  copy_check <- file.copy(
     SCRIPT_FILE,
-    script_check,
+    check_script,
     overwrite = TRUE
   )
+
   script_copy_status <- if (
-    isTRUE(copy1) &&
-      isTRUE(copy2)
+    isTRUE(copy_methods) &&
+    isTRUE(copy_check)
   ) {
     "COPIED"
   } else {
@@ -3585,9 +6230,9 @@ END_TIME <- Sys.time()
 overall_status <- if (
   all(scientific_checks$status == "PASS")
 ) {
-  "COMPLETED_STAGE2_READY_FOR_REVIEW"
+  "COMPLETED_STAGE3_READY_FOR_REVIEW"
 } else {
-  "COMPLETED_STAGE2_REVIEW_REQUIRED"
+  "COMPLETED_STAGE3_REVIEW_REQUIRED"
 }
 
 run_status <- data.table(
@@ -3610,174 +6255,262 @@ run_status <- data.table(
     ),
     2
   ),
-  samples = nrow(sample_meta),
-  raw_genes = nrow(count_matrix),
-  retained_genes = sum(gene_filter),
-  deseq_contrasts = uniqueN(deseq_all$contrast),
-  edger_contrasts = uniqueN(edger_all$contrast),
-  positive_subset_opposed_genes = sum(
-    opposition_positive$deseq_opposed,
-    na.rm = TRUE
-  ),
-  negative_subset_opposed_genes = sum(
-    opposition_negative$deseq_opposed,
-    na.rm = TRUE
-  ),
-  cross_subset_full_consensus_genes = sum(
-    cross_subset$consensus_category ==
-      "Cross_subset_full_directional_consensus",
-    na.rm = TRUE
-  ),
-  optional_gsea_status = gsea_status,
-  gsea_database_mode = gsea_database_mode,
-  replaced_previous_stage2 = REPLACE_PREVIOUS_STAGE2,
-  previous_v1_output_existed = any(
-    replacement_records$path_type %in% c(
-      "prior_incomplete_output_directory",
-      "prior_incomplete_check_zip"
-    ) &
-      replacement_records$existed_before
-  ),
+  biological_samples = nrow(sample_meta),
+  retained_cells = ncol(cardiac),
+  retained_genes = nrow(cardiac),
+  major_clusters =
+    uniqueN(cardiac$seurat_clusters),
+  major_cell_types =
+    uniqueN(cardiac$major_cell_type),
+  eligible_pseudobulk_cell_types =
+    length(eligible_celltypes),
+  pseudobulk_tested_genes =
+    nrow(pseudobulk_results),
+  macrophage_cells =
+    length(macrophage_cells),
+  macrophage_status =
+    macrophage_status,
+  doublet_status =
+    doublet_status,
   warnings = nrow(warnings_dt),
-  script_copy_status = script_copy_status,
-  scientific_checks_failed = sum(
-    scientific_checks$status != "PASS"
-  ),
-  overall_status = overall_status
+  script_copy_status =
+    script_copy_status,
+  scientific_checks_failed =
+    sum(scientific_checks$status != "PASS"),
+  overall_status =
+    overall_status
 )
+
 fwrite(
   run_status,
   file.path(
     DIRS$tables,
-    "24_stage2_run_status.csv"
+    "39_stage3_run_status.csv"
   )
 )
 
 readme <- c(
-  "HFpEF Reanalysis Project - Stage 2",
-  "GSE237156 drug-opposed macrophage transcriptomic discovery",
+  "HFpEF Reanalysis Project - Stage 3 FIXED v4 PATCH",
+  "GSE236585 checkpoint-based doublet and annotation repair",
   "",
-  paste0("Overall status: ", overall_status),
-  paste0("Samples: ", nrow(sample_meta)),
-  paste0("Raw genes: ", nrow(count_matrix)),
-  paste0("Retained genes: ", sum(gene_filter)),
-  paste0("DESeq2 contrasts: ", uniqueN(deseq_all$contrast)),
-  paste0("edgeR contrasts: ", uniqueN(edger_all$contrast)),
-  paste0("Optional GSEA status: ", gsea_status),
-  paste0("GSEA database mode: ", gsea_database_mode),
-  paste0("Previous incomplete Stage 2 replaced: ", REPLACE_PREVIOUS_STAGE2),
-  paste0("Script snapshot status: ", script_copy_status),
+  paste0(
+    "Overall status: ",
+    overall_status
+  ),
+  paste0(
+    "Biological samples: ",
+    nrow(sample_meta)
+  ),
+  paste0(
+    "Retained cells: ",
+    ncol(cardiac)
+  ),
+  paste0(
+    "Major cell types: ",
+    uniqueN(cardiac$major_cell_type)
+  ),
+  paste0(
+    "Eligible pseudobulk cell types: ",
+    length(eligible_celltypes)
+  ),
+  paste0(
+    "Macrophage cells: ",
+    length(macrophage_cells)
+  ),
+  paste0(
+    "Doublet analysis: ",
+    doublet_status
+  ),
+  paste0(
+    "Script snapshot: ",
+    script_copy_status
+  ),
   "",
-  "Primary interpretation:",
-  "- Disease-associated and dapagliflozin-associated effects were estimated separately within Ccr2-positive and Ccr2-negative macrophages.",
-  "- All retained genes were ranked by continuous drug-opposition evidence.",
-  "- No Nfkb1-centered or fixed-gene assumption was imposed.",
+  "Repair provenance:",
+  "- Loaded the completed Stage 3 v2 post-QC/pre-doublet checkpoint.",
+  "- Did not re-read raw 10x matrices or repeat original QC.",
+  "- Recomputed all downstream results after mandatory doublet removal and revised annotation.",
   "",
-  "Do not interpret Stage 2 alone as causal or independently validated.",
-  "Proceed to Stage 3 only after reviewing the CHECK package."
+  "Primary interpretation boundary:",
+  "- Cells are descriptive observations; biological samples are the inferential units.",
+  "- Stage 2 signatures are projected without forcing Nfkb1 or a fixed original candidate panel.",
+  "- GSE236585 contains no dapagliflozin exposure and therefore tests disease-program localization and concordance, not drug response.",
+  "",
+  "Upload the v4 PATCH CHECK package for review before Stage 4."
 )
 writeLines(
   readme,
   file.path(
     OUT_DIR,
-    "README_stage2.txt"
+    "README_stage3.txt"
   ),
   useBytes = TRUE
 )
 
-## Compact review tables.
-fwrite(
-  head(
-    opposition_positive,
-    TOP_CHECK_GENES
-  ),
+############################################################
+## 20. Compact CHECK package
+############################################################
+
+## Compact pseudobulk program tables.
+write_csv_safe(
+  pseudobulk_program_stats[
+    signature_name %in%
+      primary_signature_names
+  ],
   file.path(
     DIRS$check,
-    "TOP500_opposition_Ccr2_positive.csv"
+    "PRIMARY_program_localization_statistics.csv"
   )
 )
-fwrite(
-  head(
-    opposition_negative,
-    TOP_CHECK_GENES
-  ),
+write_csv_safe(
+  top_pseudobulk_de,
   file.path(
     DIRS$check,
-    "TOP500_opposition_Ccr2_negative.csv"
+    "TOP_pseudobulk_DE_by_celltype.csv"
   )
 )
-fwrite(
-  head(
-    cross_subset,
-    TOP_CHECK_GENES
-  ),
+write_csv_safe(
+  stage2_stage3_concordance,
   file.path(
     DIRS$check,
-    "TOP500_cross_subset_consensus.csv"
+    "Stage2_Stage3_concordance.csv"
+  )
+)
+write_csv_safe(
+  macrophage_cluster_annotation,
+  file.path(
+    DIRS$check,
+    "Macrophage_cluster_annotation.csv"
+  )
+)
+write_csv_safe(
+  macrophage_state_score_stats[
+    signature_name %in%
+      primary_signature_names
+  ],
+  file.path(
+    DIRS$check,
+    "Macrophage_primary_program_statistics.csv"
   )
 )
 
 review_files <- c(
   file.path(
-    DIRS$logs,
-    "previous_stage2_replacement_audit.csv"
+    DIRS$tables,
+    "01_locked_GSE236585_sample_metadata.csv"
   ),
   file.path(
     DIRS$tables,
-    "01_sample_metadata_used.csv"
+    "03_stage2_signature_size_summary.csv"
   ),
   file.path(
     DIRS$tables,
-    "02_group_count_validation.csv"
+    "04A_checkpoint_resume_audit.csv"
   ),
   file.path(
     DIRS$tables,
-    "03_sample_to_RSEM_file_mapping.csv"
+    "04_GSE236585_10x_file_mapping_and_dimensions.csv"
   ),
   file.path(
     DIRS$tables,
-    "06_sample_QC_metrics.csv"
+    "05_sample_specific_QC_thresholds.csv"
   ),
   file.path(
     DIRS$tables,
-    "07_contrast_definitions.csv"
+    "06_sample_QC_retention_summary.csv"
   ),
   file.path(
     DIRS$tables,
-    "10_contrast_result_summary.csv"
+    "06A_checkpoint_cell_count_validation.csv"
   ),
   file.path(
     DIRS$tables,
-    "12_DESeq2_edgeR_method_concordance_summary.csv"
+    "07A_scDblFinder_class_summary.csv"
   ),
   file.path(
     DIRS$tables,
-    "15_opposition_summary.csv"
+    "07B_scDblFinder_rate_summary.csv"
   ),
   file.path(
     DIRS$tables,
-    "20_Hallmark_pathway_opposition.csv"
+    "11_major_celltype_cluster_annotation.csv"
+  ),
+  file.path(
+    DIRS$tables,
+    "14A_cluster_priority_marker_evidence.csv"
+  ),
+  file.path(
+    DIRS$tables,
+    "14B_cluster_QC_and_sample_balance.csv"
+  ),
+  file.path(
+    DIRS$tables,
+    "14C_known_misannotation_class_audit.csv"
+  ),
+  file.path(
+    DIRS$tables,
+    "14_top_cluster_markers_for_review.csv"
+  ),
+  file.path(
+    DIRS$tables,
+    "15_celltype_composition_by_sample.csv"
+  ),
+  file.path(
+    DIRS$tables,
+    "16_celltype_composition_exploratory_statistics.csv"
+  ),
+  file.path(
+    DIRS$tables,
+    "17_signature_gene_coverage_in_GSE236585.csv"
+  ),
+  file.path(
+    DIRS$tables,
+    "21_major_celltype_pseudobulk_eligibility.csv"
+  ),
+  file.path(
+    DIRS$tables,
+    "23_major_celltype_pseudobulk_DE_summary.csv"
+  ),
+  file.path(
+    DIRS$tables,
+    "27_pseudobulk_program_statistics.csv"
+  ),
+  file.path(
+    DIRS$tables,
+    "28_stage2_stage3_gene_level_concordance.csv"
+  ),
+  file.path(
+    DIRS$tables,
+    "30_macrophage_cluster_annotation.csv"
+  ),
+  file.path(
+    DIRS$tables,
+    "33_macrophage_state_composition_by_sample.csv"
+  ),
+  file.path(
+    DIRS$tables,
+    "35_macrophage_state_score_statistics.csv"
   ),
   workbook_path,
   file.path(
     DIRS$tables,
-    "22_warnings_and_nonfatal_issues.csv"
+    "37_warnings_and_nonfatal_issues.csv"
   ),
   file.path(
     DIRS$tables,
-    "23_scientific_completion_checks.csv"
+    "38_scientific_completion_checks.csv"
   ),
   file.path(
     DIRS$tables,
-    "24_stage2_run_status.csv"
+    "39_stage3_run_status.csv"
   ),
   file.path(
     DIRS$methods,
-    "stage2_parameters_and_rationale.csv"
+    "stage3_parameters_and_rationale.csv"
   ),
   file.path(
     DIRS$methods,
-    "stage2_methods_and_claim_boundaries.txt"
+    "stage3_methods_and_claim_boundaries.txt"
   ),
   file.path(
     DIRS$methods,
@@ -3785,7 +6518,7 @@ review_files <- c(
   ),
   file.path(
     OUT_DIR,
-    "README_stage2.txt"
+    "README_stage3.txt"
   ),
   LOG_FILE,
   list.files(
@@ -3795,7 +6528,9 @@ review_files <- c(
   )
 )
 review_files <- unique(
-  review_files[file.exists(review_files)]
+  review_files[
+    file.exists(review_files)
+  ]
 )
 
 for (f in review_files) {
@@ -3803,6 +6538,7 @@ for (f in review_files) {
     DIRS$check,
     basename(f)
   )
+
   if (
     normalizePath(
       f,
@@ -3833,17 +6569,20 @@ check_manifest <- data.table(
     file.info(check_files)$size
   )
 )
-check_manifest[, sha256 := vapply(
-  check_files,
-  function(f) {
-    digest::digest(
-      file = f,
-      algo = "sha256",
-      serialize = FALSE
-    )
-  },
-  character(1)
-)]
+check_manifest[
+  ,
+  sha256 := vapply(
+    check_files,
+    function(f) {
+      digest::digest(
+        file = f,
+        algo = "sha256",
+        serialize = FALSE
+      )
+    },
+    character(1)
+  )
+]
 fwrite(
   check_manifest,
   file.path(
@@ -3853,7 +6592,10 @@ fwrite(
 )
 
 if (file.exists(CHECK_ZIP)) {
-  unlink(CHECK_ZIP, force = TRUE)
+  unlink(
+    CHECK_ZIP,
+    force = TRUE
+  )
 }
 zip::zipr(
   zipfile = CHECK_ZIP,
@@ -3864,37 +6606,33 @@ zip::zipr(
   root = DIRS$check
 )
 
-log_msg("Stage 2 analysis finished.")
+log_msg("Stage 3 analysis finished.")
 log_msg("Overall status: ", overall_status)
-log_msg("Retained genes: ", sum(gene_filter))
 log_msg(
-  "Ccr2-positive DESeq2-opposed genes: ",
-  sum(
-    opposition_positive$deseq_opposed,
-    na.rm = TRUE
-  )
+  "Retained cells: ",
+  ncol(cardiac)
 )
 log_msg(
-  "Ccr2-negative DESeq2-opposed genes: ",
-  sum(
-    opposition_negative$deseq_opposed,
-    na.rm = TRUE
-  )
+  "Major cell types: ",
+  uniqueN(cardiac$major_cell_type)
 )
 log_msg(
-  "Cross-subset full-consensus genes: ",
-  sum(
-    cross_subset$consensus_category ==
-      "Cross_subset_full_directional_consensus",
-    na.rm = TRUE
-  )
+  "Eligible pseudobulk cell types: ",
+  length(eligible_celltypes)
 )
-log_msg("CHECK package: ", CHECK_ZIP)
+log_msg(
+  "Macrophage cells: ",
+  length(macrophage_cells)
+)
+log_msg(
+  "CHECK package: ",
+  CHECK_ZIP
+)
 
 cat("\n============================================================\n")
-cat("HFpEF Stage 2 GSE237156 analysis completed\n")
+cat("HFpEF Stage 3 FIXED v3 checkpoint repair completed\n")
 cat("Status: ", overall_status, "\n", sep = "")
 cat("Output: ", OUT_DIR, "\n", sep = "")
 cat("CHECK: ", CHECK_ZIP, "\n", sep = "")
-cat("Upload the CHECK package for review before Stage 3.\n")
+cat("Upload the v4 PATCH CHECK package for review before Stage 4.\n")
 cat("============================================================\n")

@@ -1,64 +1,31 @@
-# R session and project files
-.Rhistory
-.RData
-.Ruserdata
-.Rproj.user/
-*.Rproj
-
-# Local environment and credentials
-.Renviron
-.env
-.env.*
-*password*
-*passwd*
-*密码*
-*token*
-*credential*
-*secret*
-Github账号密码*
-credentials*
-secrets*
-
-# Large biological data and generated outputs
-0.GEO/
-00_external_resources/
-00_resources/
-data/raw/
-data/cache/
-outputs/
-results/
-temp/
-tmp/
-01_stage1_*/
-02_stage2_*/
-03_stage3_*/
-04_stage4_*/
-05_stage5_*/
-05B_stage5B_*/
-06_stage6_*/
-07_stage7_*/
-08_stage8_*/
-REVISION_*/
-*.rds
-*.h5ad
-*.h5
-*.hdf5
-*.mtx
-*.mtx.gz
-*.tar
-*.tar.gz
-*.7z
-*.rar
-*.zip
-*.tif
-*.tiff
-*.png
-*.pdf
-
-# Temporary and system files
-__pycache__/
-.DS_Store
-Thumbs.db
-*.tmp
-*.lnk
-~$*
+cff-version: 1.2.0
+message: "Please cite the associated manuscript and the versioned software release."
+title: "Integrative transcriptomics workflow for dapagliflozin-opposed macrophage programs in HFpEF"
+type: software
+authors:
+  - family-names: "Wang"
+    given-names: "Dingkun"
+  - family-names: "Cai"
+    given-names: "Wenyao"
+  - family-names: "Wang"
+    given-names: "Ruonan"
+  - family-names: "Luo"
+    given-names: "Wenbo"
+  - family-names: "Liu"
+    given-names: "Yang"
+  - family-names: "Zhou"
+    given-names: "Quan"
+  - family-names: "Jiang"
+    given-names: "Yu"
+version: "1.0.0"
+date-released: "2026-07-17"
+repository-code: "https://github.com/z-187/HFpEF-NFKB1-integrative-omics"
+license: "MIT"
+keywords:
+  - HFpEF
+  - macrophage
+  - dapagliflozin
+  - BHLHE40
+  - NFKB1
+  - single-cell transcriptomics
+  - cell-cell communication
